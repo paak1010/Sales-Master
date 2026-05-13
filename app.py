@@ -1,13 +1,95 @@
-# ... (앞부분 데이터 로드 로직 동일) ...
+import streamlit as st
+import pandas as pd
+from io import BytesIO
 
+# 1. 페이지 설정
+st.set_page_config(page_title="멘소래담 재고 검색 엔진", layout="wide")
+
+# UI 스타일 개선 (깔끔한 배경 및 버튼 스타일)
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stDataFrame { border: 1px solid #e6e9ef; border-radius: 10px; }
+    .stDownloadButton > button { width: 100%; background-color: #007bff; color: white; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("📦 가용 재고 실시간 조회 시스템")
+
+# --- 엑셀 변환 헬퍼 함수 ---
+def to_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='재고조회결과')
+    return output.getvalue()
+
+# 2. 데이터 로드 및 전처리
+@st.cache_data
+def load_filtered_data():
+    stock_file = "Sales_Stock_260513.xlsx"
+    mapping_file = "매핑용.xlsx"
+    
+    try:
+        # --- 1) 데이터 로드 ---
+        df_stock = pd.read_excel(stock_file, sheet_name="재고현황", header=1)
+        df_stock.columns = df_stock.columns.astype(str).str.strip()
+        
+        df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2")
+        df_channel.columns = df_channel.columns.astype(str).str.strip()
+        
+        if '제품코드' not in df_channel.columns:
+            df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2", header=1)
+            df_channel.columns = df_channel.columns.astype(str).str.strip()
+
+        # --- 2) 데이터 병합 (특이사항 추가) ---
+        mapping_sub = df_channel[['Customer', '제품코드', 'Remarks']].dropna(subset=['제품코드'])
+        df_merged = pd.merge(df_stock, mapping_sub, left_on="상품코드", right_on="제품코드", how="left")
+        
+        if '제품코드' in df_merged.columns:
+            df_merged.drop(columns=['제품코드'], inplace=True)
+        
+        df_merged.rename(columns={
+            'Customer': '납품처',
+            '상품코드': '제품코드', 
+            '화주LOT': '로트번호',
+            '입수량(BOX)': '박스입수',
+            '합계수량': '환산(재고 수)',
+            'Remarks': '특이사항'
+        }, inplace=True)
+
+        # --- 3) 로트번호 필터링 ---
+        df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
+        df_merged = df_merged[df_merged['로트번호'] != '']
+        df_merged = df_merged[df_merged['로트번호'].str.lower() != 'nan']
+        df_merged = df_merged[~df_merged['로트번호'].str.contains('폐기', na=False)]
+        
+        # --- 4) 상품바코드 클렌징 (물음표 및 찌꺼기 제거) ---
+        if '상품바코드' in df_merged.columns:
+            df_merged['상품바코드'] = df_merged['상품바코드'].fillna('').astype(str)
+            df_merged['상품바코드'] = df_merged['상품바코드'].str.replace(r'\.0$', '', regex=True)
+            df_merged['상품바코드'] = df_merged['상품바코드'].str.replace(r'[?？]', '', regex=True)
+            df_merged['상품바코드'] = df_merged['상품바코드'].str.strip()
+
+        # --- 5) 유효일자 정리 ---
+        if '유효일자' in df_merged.columns:
+            df_merged['유효일자'] = pd.to_datetime(df_merged['유효일자'], errors='coerce').dt.strftime('%Y-%m-%d')
+            
+        return df_merged
+    except Exception as e:
+        st.error(f"❌ 데이터 로드 중 오류 발생: {e}")
+        st.stop()
+
+# 원본 데이터 로드
 df_raw = load_filtered_data()
 
-# 검색 설정 (단독 납품 토글)
+# ==========================================
+# ✨ 검색 설정: 단독 납품(전용) 필터 토글 ✨
+# ==========================================
 st.markdown("---")
 col_setting, col_blank = st.columns([1, 2])
 with col_setting:
     st.markdown("### ⚙️ 검색 설정")
-    is_exclusive = st.toggle("🌟 단독 납품(전용) 제품만 보기")
+    is_exclusive = st.toggle("🌟 단독 납품(전용) 제품만 보기", help="여러 채널에 분산되지 않고 오직 한 채널에만 납품되는 제품만 표시합니다.")
 
 if is_exclusive:
     df = df_raw[~df_raw['납품처'].astype(str).str.contains(',', na=False)]
@@ -16,24 +98,24 @@ else:
     df = df_raw.copy()
 st.markdown("---")
 
-
 # ==========================================
-# ✨ 핵심 추가 기능: 동적 컬럼 선택 UI ✨
+# ✨ 화면 출력 설정: 동적 컬럼 선택 ✨
 # ==========================================
 st.markdown("### 📊 데이터 표시 설정")
 
-all_cols = ['납품처', '제품코드', '상품명', '환산(재고 수)', '로트번호', '유효일자', '잔여일수', '박스입수', '상품바코드', '특이사항']
-# 기본으로 화면에 띄워둘 '핵심 열' 지정
-default_cols = ['납품처', '제품코드', '상품명', '환산(재고 수)']
+# 전체 컬럼 목록 (다운로드 시에는 이 전체 데이터가 받아집니다)
+all_cols = ['납품처', '상품바코드', '제품코드', '상품명', '로트번호', '잔여일수', '유효일자', '박스입수', '환산(재고 수)', '특이사항']
 
-# 사용자가 보고 싶은 열을 맘대로 넣고 뺄 수 있는 멀티셀렉트 박스
+# 기본으로 화면에 띄워둘 '핵심 컬럼'
+default_cols = ['납품처', '제품코드', '상품명', '환산(재고 수)', '특이사항']
+
 selected_cols = st.multiselect(
     "👀 표에서 확인할 항목을 선택하세요 (자유롭게 추가/삭제 가능)",
     options=all_cols,
     default=default_cols
 )
 
-# 3. 화면 구성 및 출력 로직
+# 3. 화면 구성 및 검색 로직 (탭 분리)
 tab1, tab2 = st.tabs(["🏢 채널(납품처) 기준", "🔍 제품명/코드 기준"])
 
 # --- 탭 1: 채널별 검색 ---
@@ -46,32 +128,47 @@ with tab1:
     
     if target != "업체 선택":
         result = df[df['납품처'].str.contains(target, na=False)]
+        
         with col_down:
             st.write("") 
             st.write("")
-            # 다운로드할 때는 화면 설정과 상관없이 '전체 컬럼'을 다운받도록 all_cols 사용
+            # 🚨 엑셀 다운로드는 숨겨진 열 포함 전체 데이터(all_cols)로 생성
             excel_bin = to_excel(result[all_cols])
-            st.download_button(label="📥 전체 데이터 엑셀 다운로드", data=excel_bin, file_name=f"{target}_재고.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                label="📥 전체 데이터 엑셀 다운로드", 
+                data=excel_bin, 
+                file_name=f"{target}_재고.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
             
-        st.metric("가용 재고", f"{len(result)} 건")
-        
-        # 🚨 화면에 그릴 때는 사용자가 선택한 컬럼(selected_cols)만 출력
+        st.metric("가용 재고 건수", f"{len(result)} 건")
+        # 🚨 화면 표시는 사용자가 선택한 컬럼(selected_cols)만 표시
         st.dataframe(result[selected_cols], use_container_width=True, hide_index=True, height=550)
 
 # --- 탭 2: 제품별 검색 ---
 with tab2:
-    search_input = st.text_input("제품명 또는 코드를 입력하세요")
+    col_search, col_down2 = st.columns([3, 1])
+    with col_search:
+        search_input = st.text_input("제품명 또는 코드를 입력하세요")
+        
     if search_input:
         result_q = df[
             df['상품명'].str.contains(search_input, case=False, na=False) |
             df['제품코드'].str.contains(search_input, case=False, na=False)
         ]
+        
         if not result_q.empty:
-            excel_bin_q = to_excel(result_q[all_cols])
-            st.download_button(label="📥 전체 데이터 결과 다운로드", data=excel_bin_q, file_name="검색결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            with col_down2:
+                st.write("") 
+                st.write("")
+                excel_bin_q = to_excel(result_q[all_cols])
+                st.download_button(
+                    label="📥 전체 데이터 엑셀 다운로드", 
+                    data=excel_bin_q, 
+                    file_name="검색결과.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
             st.metric("검색 결과", f"{len(result_q)} 건")
-            
-            # 🚨 여기도 마찬가지로 선택한 컬럼만 출력
             st.dataframe(result_q[selected_cols], use_container_width=True, hide_index=True, height=550)
         else:
             st.warning("가용한 제품 정보가 없습니다.")

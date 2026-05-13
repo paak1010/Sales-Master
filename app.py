@@ -21,12 +21,14 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='재고조회결과')
     return output.getvalue()
 
+# 2. 데이터 로드 및 정밀 전처리
 @st.cache_data
 def load_filtered_data():
     stock_file = "Sales_Stock_260513.xlsx"
     mapping_file = "매핑용.xlsx"
     
     try:
+        # --- 1) 데이터 로드 ---
         df_stock = pd.read_excel(stock_file, sheet_name="재고현황", header=1)
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
@@ -37,11 +39,27 @@ def load_filtered_data():
             df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2", header=1)
             df_channel.columns = df_channel.columns.astype(str).str.strip()
 
-        mapping_sub = df_channel[['Customer', '제품코드', 'Remarks']].dropna(subset=['제품코드'])
-        df_merged = pd.merge(df_stock, mapping_sub, left_on="상품코드", right_on="제품코드", how="left")
+        # --- 2) ✨ 매핑 키(Key) 정규화 (누락 방지 핵심) ---
+        # 양쪽 파일의 코드를 대문자 변환 + 공백 제거하여 매칭 확률 100%로 상향
+        df_stock['상품코드_key'] = df_stock['상품코드'].astype(str).str.strip().str.upper()
+        df_channel['제품코드_key'] = df_channel['제품코드'].astype(str).str.strip().str.upper()
+
+        # --- 3) 데이터 병합 ---
+        mapping_sub = df_channel[['Customer', '제품코드_key', 'Remarks']].dropna(subset=['제품코드_key'])
         
-        if '제품코드' in df_merged.columns:
-            df_merged.drop(columns=['제품코드'], inplace=True)
+        # 중복 매핑 방지를 위해 제품코드_key 기준 중복 제거
+        mapping_sub = mapping_sub.drop_duplicates('제품코드_key')
+        
+        df_merged = pd.merge(
+            df_stock, 
+            mapping_sub, 
+            left_on="상품코드_key", 
+            right_on="제품코드_key", 
+            how="left"
+        )
+        
+        # 불필요한 임시 키 컬럼 삭제
+        df_merged.drop(columns=['상품코드_key', '제품코드_key'], inplace=True)
         
         df_merged.rename(columns={
             'Customer': '납품처',
@@ -52,6 +70,7 @@ def load_filtered_data():
             'Remarks': '특이사항'
         }, inplace=True)
 
+        # --- 4) 필터링 및 클렌징 ---
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
         df_merged = df_merged[df_merged['로트번호'] != '']
         df_merged = df_merged[df_merged['로트번호'].str.lower() != 'nan']
@@ -68,7 +87,7 @@ def load_filtered_data():
             
         return df_merged
     except Exception as e:
-        st.error(f"❌ 데이터 로드 중 오류 발생: {e}")
+        st.error(f"❌ 데이터 처리 중 오류: {e}")
         st.stop()
 
 df_raw = load_filtered_data()
@@ -80,40 +99,21 @@ with col_setting:
     st.markdown("### ⚙️ 검색 설정")
     is_exclusive = st.toggle("🌟 단독 납품(전용) 제품만 보기")
 
+# 데이터 필터링 (토글 여부에 따라)
 if is_exclusive:
+    # 콤마가 없는 행만 선택
     df = df_raw[~df_raw['납품처'].astype(str).str.contains(',', na=False)]
-    st.info("💡 단일 채널 전용 제품만 표시 중입니다.")
 else:
     df = df_raw.copy()
 st.markdown("---")
 
+# 시각화 설정
 display_cols = ['납품처', '제품코드', '상품명', '로트번호', '유효일자', '잔여일수', '환산(재고 수)', '특이사항', '상품바코드']
-
-# ✨ 대시보드 시각화 설정 (st.column_config) ✨
-# 숫자로만 보이던 답답한 데이터들에 디자인 요소를 입힙니다.
 dashboard_config = {
-    "잔여일수": st.column_config.ProgressColumn(
-        "잔여일수 (위험도)",
-        help="유효일자까지 남은 일수입니다.",
-        format="%d 일",
-        min_value=0,
-        max_value=1095, # 최대 3년 기준으로 게이지 바 표시
-    ),
-    "환산(재고 수)": st.column_config.NumberColumn(
-        "가용 재고",
-        help="현재 출고 가능한 재고 수량",
-        format="%d 개"
-    ),
-    "유효일자": st.column_config.DateColumn(
-        "유효일자 📅",
-        format="YYYY-MM-DD"
-    ),
-    "상품바코드": st.column_config.TextColumn(
-        "바코드 🏷️"
-    ),
-    "특이사항": st.column_config.TextColumn(
-        "특이사항 📝"
-    )
+    "잔여일수": st.column_config.ProgressColumn("잔여일수 (위험도)", format="%d 일", min_value=0, max_value=1095),
+    "환산(재고 수)": st.column_config.NumberColumn("가용 재고", format="%d 개"),
+    "유효일자": st.column_config.DateColumn("유효일자 📅"),
+    "특이사항": st.column_config.TextColumn("특이사항 📝")
 }
 
 tab1, tab2 = st.tabs(["🏢 채널(납품처) 기준", "🔍 제품명/코드 기준"])
@@ -123,11 +123,18 @@ with tab1:
     col_input, col_down = st.columns([3, 1])
     with col_input:
         all_customers = df['납품처'].dropna().unique().tolist()
-        unique_customers = sorted(list(set([c.strip() for sublist in [str(x).split(',') for x in all_customers] for c in sublist])))
+        # 납품처 리스트 정리 (콤마 분리 및 공백 제거)
+        customer_set = set()
+        for c in all_customers:
+            for part in str(c).split(','):
+                customer_set.add(part.strip())
+        unique_customers = sorted(list(customer_set))
+        
         target = st.selectbox("업체를 선택하세요", ["업체 선택"] + unique_customers)
     
     if target != "업체 선택":
-        result = df[df['납품처'].str.contains(target, na=False)]
+        # ✨ 핵심 수정: regex=False를 추가하여 (TrD) 같은 괄호를 문자 그대로 검색
+        result = df[df['납품처'].str.contains(target, na=False, regex=False)]
         
         with col_down:
             st.write("") 
@@ -136,44 +143,21 @@ with tab1:
             st.download_button(label="📥 엑셀 다운로드", data=excel_bin, file_name=f"{target}_재고.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             
         st.metric("가용 재고 건수", f"{len(result)} 건")
-        
-        # 🚨 column_config를 적용하여 예쁘게 출력
-        st.dataframe(
-            result[display_cols], 
-            use_container_width=True, 
-            hide_index=True, 
-            height=550,
-            column_config=dashboard_config
-        )
+        st.dataframe(result[display_cols], use_container_width=True, hide_index=True, height=550, column_config=dashboard_config)
 
 # --- 탭 2: 제품별 검색 ---
 with tab2:
-    col_search, col_down2 = st.columns([3, 1])
-    with col_search:
-        search_input = st.text_input("제품명 또는 코드를 입력하세요")
-        
+    search_input = st.text_input("제품명 또는 코드를 입력하세요")
     if search_input:
+        # 제품 검색도 안전하게 대소문자 구분 없이 검색
         result_q = df[
-            df['상품명'].str.contains(search_input, case=False, na=False) |
-            df['제품코드'].str.contains(search_input, case=False, na=False)
+            df['상품명'].str.contains(search_input, case=False, na=False, regex=False) |
+            df['제품코드'].str.contains(search_input, case=False, na=False, regex=False)
         ]
-        
         if not result_q.empty:
-            with col_down2:
-                st.write("") 
-                st.write("")
-                excel_bin_q = to_excel(result_q[display_cols])
-                st.download_button(label="📥 엑셀 다운로드", data=excel_bin_q, file_name="검색결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                
+            excel_bin_q = to_excel(result_q[display_cols])
+            st.download_button(label="📥 엑셀 다운로드", data=excel_bin_q, file_name="검색결과.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             st.metric("검색 결과", f"{len(result_q)} 건")
-            
-            # 🚨 column_config를 적용하여 예쁘게 출력
-            st.dataframe(
-                result_q[display_cols], 
-                use_container_width=True, 
-                hide_index=True, 
-                height=550,
-                column_config=dashboard_config
-            )
+            st.dataframe(result_q[display_cols], use_container_width=True, hide_index=True, height=550, column_config=dashboard_config)
         else:
-            st.warning("가용한 제품 정보가 없습니다.")
+            st.warning("가용한 제품 정보가 없습니다. 검색어나 필터 설정을 확인해주세요.")

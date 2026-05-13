@@ -1,84 +1,90 @@
 import streamlit as st
 import pandas as pd
+import os
 
-# 1. 페이지 기본 설정
-st.set_page_config(page_title="채널별 재고 검색 엔진", layout="wide")
-st.title("📦 채널 및 제품별 재고 검색 엔진")
+# 1. 페이지 설정
+st.set_page_config(page_title="SCM 재고 검색 엔진", layout="wide")
+st.title("📦 채널 및 제품별 실시간 재고 조회")
 
-# 2. 깃허브에 업로드된 데이터 로드 (캐싱하여 속도 향상)
+# 2. 데이터 로드 및 전처리
 @st.cache_data
 def load_data():
-    # 깃허브 레포지토리에 있는 파일명과 정확히 일치해야 합니다.
+    # 📌 원본 파일명을 여기에 정확히 입력해 주세요. (아래는 예시입니다)
+    # 깃허브에 올린 파일의 띄어쓰기, 대소문자, 하이픈 위치까지 완벽히 똑같아야 합니다.
+    stock_file = "매핑용.xlsx - 재고현황.csv" 
+    mapping_file = "매핑용.xlsx - Sheet2.csv"
+    
     try:
-        df_stock = pd.read_csv("Sales_Stock_260513.xlsx - 재고현황.csv")
-        df_channel = pd.read_csv("Sales_Stock_260513.xlsx - 담당자 및 채널.csv")
+        # 파일 최상단 빈 줄을 무시하기 위해 header=1 설정
+        df_stock = pd.read_csv(stock_file, encoding='utf-8-sig', header=1)
+        df_channel = pd.read_csv(mapping_file, encoding='utf-8-sig', header=1)
+        
+        # 데이터 병합 (상품코드 기준)
+        df_merged = pd.merge(
+            df_stock, 
+            df_channel[['Customer', '제품코드']], 
+            left_on="상품코드", 
+            right_on="제품코드", 
+            how="left"
+        )
+        
+        # 컬럼명 정리
+        df_merged.rename(columns={
+            'Customer': '납품처',
+            '상품코드': '제품코드',
+            '화주LOT': '로트번호',
+            '입수량(BOX)': '박스입수',
+            '합계수량': '환산(재고 수)'
+        }, inplace=True)
+        
+        return df_merged
+    
     except FileNotFoundError:
-        st.error("데이터 파일을 찾을 수 없습니다. 깃허브 레포지토리에 파일이 정상적으로 올라갔는지 확인해주세요.")
+        # 💡 에러 발생 시, 현재 서버(깃허브)에 있는 파일 목록을 화면에 보여줍니다.
+        st.error("❌ 코드가 찾는 파일명과 깃허브에 올라간 파일명이 다릅니다.")
+        st.warning(f"코드가 찾고 있는 파일: \n1. `{stock_file}`\n2. `{mapping_file}`")
+        st.info("📂 현재 깃허브 서버에 인식되어 있는 파일 목록은 아래와 같습니다. 아래 목록에 있는 이름과 코드를 똑같이 맞춰주세요!")
+        st.write(os.listdir('.'))
         st.stop()
-    
-    # 데이터 병합 (Left Join)
-    df_merged = pd.merge(
-        df_stock, 
-        df_channel[['Customer', '제품코드']], 
-        left_on="상품코드", 
-        right_on="제품코드", 
-        how="left"
-    )
-    
-    # 납품처 컬럼명 변경
-    df_merged.rename(columns={'Customer': '납품처'}, inplace=True)
-    return df_merged
 
-df_merged = load_data()
+df = load_data()
 
-# 최종 화면에 보여줄 컬럼 지정 및 이름 변경 매핑
-display_columns = ['납품처', '상품바코드', '상품코드', '상품명', '화주LOT', '잔여일수', '유효일자', '입수량(BOX)', '합계수량']
-rename_dict = {
-    '상품코드': '제품코드',
-    '화주LOT': '로트번호',
-    '입수량(BOX)': '박스입수',
-    '합계수량': '환산(재고 수)'
-}
+# 3. 화면에 보여줄 컬럼 순서
+display_cols = ['납품처', '상품바코드', '제품코드', '상품명', '로트번호', '잔여일수', '유효일자', '박스입수', '환산(재고 수)']
 
-# 3. 화면 구성: 두 개의 탭으로 나누어 UI 분리
-tab1, tab2 = st.tabs(["🏢 납품처(채널) 기준 검색", "🔍 제품 기준 검색"])
+# 4. UI 구성 (탭)
+tab1, tab2 = st.tabs(["🏢 채널(납품처) 기준 검색", "🔍 제품명/코드 기준 검색"])
 
-# --- 탭 1: 납품처(올리브영 등) 기준 검색 ---
+# --- 탭 1: 채널별 검색 ---
 with tab1:
-    st.subheader("납품처별 재고 조회")
+    st.subheader("납품처별 재고 현황")
     
-    # 납품처 목록 추출
-    customer_list = df_merged['납품처'].dropna().unique().tolist()
+    # Sheet2의 Customer 컬럼에 콤마(,)로 여러 채널이 적힌 경우를 위해 분리
+    raw_channels = df['납품처'].dropna().str.split(',').explode().str.strip().unique()
+    channel_list = sorted(list(raw_channels))
     
-    # 자동완성 지원 셀렉트박스
-    selected_customer = st.selectbox(
-        "납품처를 검색하거나 선택하세요 (예: 올리브영, 쿠팡로켓)", 
-        ["선택하세요"] + customer_list
+    selected_channel = st.selectbox(
+        "출고할 납품처(채널)를 검색하거나 선택하세요", 
+        ["선택하세요"] + channel_list
     )
     
-    if selected_customer != "선택하세요":
-        filtered_df = df_merged[df_merged['납품처'] == selected_customer]
-        show_df = filtered_df[display_columns].rename(columns=rename_dict)
-        st.dataframe(show_df, use_container_width=True, hide_index=True)
+    if selected_channel != "선택하세요":
+        # 선택한 채널이 포함된 행 검색
+        filtered = df[df['납품처'].str.contains(selected_channel, na=False)]
+        st.dataframe(filtered[display_cols], use_container_width=True, hide_index=True)
 
-# --- 탭 2: 제품코드 또는 상품명 기준 검색 ---
+# --- 탭 2: 제품명/코드 검색 ---
 with tab2:
-    st.subheader("제품명/제품코드 기준 검색")
+    st.subheader("제품 상세 검색")
+    search_q = st.text_input("찾으시는 제품명 또는 제품코드를 입력하세요 (일부만 입력해도 검색됨)")
     
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        search_type = st.radio("검색 기준", ["상품명", "제품코드"])
-    with col2:
-        search_keyword = st.text_input(f"검색할 {search_type}을(를) 입력하세요 (일부만 입력해도 검색됨)")
-    
-    if search_keyword:
-        if search_type == "상품명":
-            filtered_df2 = df_merged[df_merged['상품명'].str.contains(search_keyword, case=False, na=False)]
+    if search_q:
+        filtered_q = df[
+            df['상품명'].str.contains(search_q, case=False, na=False) |
+            df['제품코드'].str.contains(search_q, case=False, na=False)
+        ]
+        
+        if not filtered_q.empty:
+            st.dataframe(filtered_q[display_cols], use_container_width=True, hide_index=True)
         else:
-            filtered_df2 = df_merged[df_merged['상품코드'].str.contains(search_keyword, case=False, na=False)]
-            
-        if not filtered_df2.empty:
-            show_df2 = filtered_df2[display_columns].rename(columns=rename_dict)
-            st.dataframe(show_df2, use_container_width=True, hide_index=True)
-        else:
-            st.warning("검색 결과가 없습니다. 입력하신 내용을 다시 확인해주세요.")
+            st.warning("검색 결과가 없습니다.")

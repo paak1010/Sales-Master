@@ -55,25 +55,27 @@ def load_filtered_data():
             '합계수량': '환산(재고 수)'
         }, inplace=True)
 
-        # --- 3) ✨ 로트번호 강력 필터링 ---
-        # 1. 엑셀의 숨은 띄어쓰기(' ')를 모두 지우고 문자형으로 통일
+        # --- 3) 로트번호 필터링 (가용 재고만 남기기) ---
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
-        
-        # 2. 진짜 로트번호가 비어있는 행 완전 삭제 (띄어쓰기 제거 후 빈칸인 것들)
         df_merged = df_merged[df_merged['로트번호'] != '']
-        
-        # 3. 간혹 'nan' 이라는 글자로 들어가는 오류 데이터 삭제
         df_merged = df_merged[df_merged['로트번호'].str.lower() != 'nan']
-        
-        # 4. '폐기' 상태인 재고 제외
         df_merged = df_merged[~df_merged['로트번호'].str.contains('폐기', na=False)]
         
-        # --- 4) 기타 데이터 클렌징 ---
+        # --- 4) ✨ 상품바코드 완벽 클렌징 ---
         if '상품바코드' in df_merged.columns:
+            # 1. 결측치 빈칸 처리 및 문자열 변환
             df_merged['상품바코드'] = df_merged['상품바코드'].fillna('').astype(str)
+            
+            # 2. 엑셀 숫자 인식으로 인해 끝에 붙은 '.0' 제거
             df_merged['상품바코드'] = df_merged['상품바코드'].str.replace(r'\.0$', '', regex=True)
-            df_merged['상품바코드'] = df_merged['상품바코드'].str.replace(r'\?+$', '', regex=True)
+            
+            # 3. 일반 물음표(?) 및 전각 물음표(？) 모두 찾아 제거
+            df_merged['상품바코드'] = df_merged['상품바코드'].str.replace(r'[?？]', '', regex=True)
+            
+            # 4. 혹시 모를 양옆 공백까지 싹둑
+            df_merged['상품바코드'] = df_merged['상품바코드'].str.strip()
 
+        # --- 5) 유효일자 정리 ---
         if '유효일자' in df_merged.columns:
             df_merged['유효일자'] = pd.to_datetime(df_merged['유효일자'], errors='coerce').dt.strftime('%Y-%m-%d')
             
@@ -84,7 +86,7 @@ def load_filtered_data():
 
 df = load_filtered_data()
 
-# 3. 화면 구성 및 검색 로직
+# 3. 화면 구성 및 출력 컬럼
 display_cols = ['납품처', '상품바코드', '제품코드', '상품명', '로트번호', '잔여일수', '유효일자', '박스입수', '환산(재고 수)']
 
 tab1, tab2 = st.tabs(["🏢 채널(납품처) 기준", "🔍 제품명/코드 기준"])

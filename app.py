@@ -22,7 +22,7 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='재고조회결과')
     return output.getvalue()
 
-# 2. 데이터 로드 및 전처리 (클렌징 로직 추가)
+# 2. 데이터 로드 및 전처리
 @st.cache_data
 def load_filtered_data():
     stock_file = "Sales_Stock_260513.xlsx"
@@ -55,23 +55,27 @@ def load_filtered_data():
             '합계수량': '환산(재고 수)'
         }, inplace=True)
 
-        # --- 3) 핵심 필터링 및 클렌징 ---
-        # 로트번호 필터링 (NaN 제거 및 '폐기' 제외)
-        df_merged = df_merged.dropna(subset=['로트번호'])
-        df_merged = df_merged[~df_merged['로트번호'].astype(str).str.contains('폐기', na=False)]
+        # --- 3) ✨ 로트번호 강력 필터링 ---
+        # 1. 엑셀의 숨은 띄어쓰기(' ')를 모두 지우고 문자형으로 통일
+        df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
         
-        # ✨ 상품바코드 클렌징 (추가된 부분)
+        # 2. 진짜 로트번호가 비어있는 행 완전 삭제 (띄어쓰기 제거 후 빈칸인 것들)
+        df_merged = df_merged[df_merged['로트번호'] != '']
+        
+        # 3. 간혹 'nan' 이라는 글자로 들어가는 오류 데이터 삭제
+        df_merged = df_merged[df_merged['로트번호'].str.lower() != 'nan']
+        
+        # 4. '폐기' 상태인 재고 제외
+        df_merged = df_merged[~df_merged['로트번호'].str.contains('폐기', na=False)]
+        
+        # --- 4) 기타 데이터 클렌징 ---
         if '상품바코드' in df_merged.columns:
-            # 결측치는 빈 문자열로 처리하고, 모두 문자형으로 변환
             df_merged['상품바코드'] = df_merged['상품바코드'].fillna('').astype(str)
-            # 숫자로 인식되어 .0이 붙는 경우 제거
             df_merged['상품바코드'] = df_merged['상품바코드'].str.replace(r'\.0$', '', regex=True)
-            # 끝에 붙은 '?' 기호들을 모두 제거
             df_merged['상품바코드'] = df_merged['상품바코드'].str.replace(r'\?+$', '', regex=True)
 
-        # 유효일자 형식 정리
         if '유효일자' in df_merged.columns:
-            df_merged['유효일자'] = pd.to_datetime(df_merged['유효일자']).dt.strftime('%Y-%m-%d')
+            df_merged['유효일자'] = pd.to_datetime(df_merged['유효일자'], errors='coerce').dt.strftime('%Y-%m-%d')
             
         return df_merged
     except Exception as e:

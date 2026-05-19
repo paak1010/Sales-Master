@@ -2,17 +2,78 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import glob
+import os
 
-# 1. 페이지 기본 설정
-st.set_page_config(page_title="멘소래담 재고 마스터링 시스템 v5", layout="wide", initial_sidebar_state="expanded")
+# ==========================================
+# 1. 페이지 테마 및 스타일 설정 (Streamlit 느낌 제거)
+# ==========================================
+st.set_page_config(
+    page_title="Rohto Mentholatum Inventory System",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+# 커스텀 CSS: 기업용 대시보드 느낌 구현
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .reportview-container .main .block-container { max-width: 95%; }
-    .stButton > button { width: 100%; background-color: #f0f2f6; color: #31333F; border-radius: 5px; border: 1px solid #d3d3d3; }
-    .stButton > button:hover { background-color: #007bff; color: white; border: 1px solid #007bff; }
-    .stDownloadButton > button { background-color: #007bff; color: white; border-radius: 5px; width: 100%; }
+    /* 폰트 설정 및 배경색 */
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+    * { font-family: 'Pretendard', sans-serif; }
+    
+    .stApp { background-color: #f8f9fa; }
+    
+    /* 헤더/푸터 숨기기 */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* 사이드바 스타일링 */
+    [data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #e0e0e0;
+    }
+    
+    /* 버튼 스타일링 (멘소래담 브랜드 컬러 느낌) */
+    .stButton > button {
+        width: 100%;
+        background-color: #ffffff;
+        color: #006838;
+        border: 1px solid #006838;
+        border-radius: 4px;
+        font-weight: 600;
+        transition: 0.3s;
+    }
+    .stButton > button:hover {
+        background-color: #006838;
+        color: #ffffff;
+    }
+
+    /* 테이블 스타일링 */
+    .main-table-header {
+        background-color: #006838;
+        color: white;
+        padding: 10px;
+        border-radius: 4px 4px 0 0;
+        font-weight: bold;
+        text-align: center;
+    }
+    .main-table-row {
+        background-color: white;
+        padding: 12px;
+        border-bottom: 1px solid #f0f0f0;
+        align-items: center;
+        display: flex;
+    }
+    
+    /* 텍스트 스타일 */
+    h1 { color: #1a1a1a; font-weight: 800; letter-spacing: -1px; }
+    h3 { color: #006838; font-weight: 700; }
+    
+    /* 데이터프레임 깔끔하게 */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -20,203 +81,175 @@ st.markdown("""
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='재고조회결과')
+        df.to_excel(writer, index=False, sheet_name='Inventory_Report')
     return output.getvalue()
 
-# --- 🚨 팝업창(모달 새창) 정의 함수 ---
-@st.dialog("📋 상세 LOT 및 유효일자 명세")
-def show_lot_details(df_detail, product_name):
-    st.markdown(f"**품명:** {product_name}")
-    st.dataframe(
-        df_detail,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "잔여일수": st.column_config.ProgressColumn("잔여일수", format="%d 일", min_value=0, max_value=1095),
-            "로트별 수량": st.column_config.NumberColumn("로트별 수량", format="%d 개"),
-            "유효일자": st.column_config.DateColumn("유효일자 📅")
-        }
-    )
-
-# --- 🎯 최신 파일 자동 탐색 함수 ---
+# --- 🎯 최신 파일 자동 탐색 함수 (2번 방식: GitHub용) ---
 def get_latest_stock_file():
-    # 깃허브(서버) 폴더 내에서 'Sales_Stock_'로 시작하는 모든 엑셀 파일 찾기
     stock_files = glob.glob("Sales_Stock_*.xlsx")
-    
     if not stock_files:
         return None
-        
-    # 파일명(날짜) 기준 역순 정렬 후 가장 첫 번째(최신) 파일 반환
     latest_file = sorted(stock_files, reverse=True)[0]
     return latest_file
 
-# 2. 데이터 로드 및 정밀 전처리
-@st.cache_data
-def load_filtered_data(stock_file):
-    mapping_file = "매핑용.xlsx"
+# --- 🚨 상세 팝업창 (동일 로트 합산 로직 포함) ---
+@st.dialog("📋 로트별 상세 재고 명세")
+def show_lot_details(df_detail, product_name):
+    st.subheader(f"제품명: {product_name}")
     
+    # [핵심] 로트번호, 유효일자, 잔여일수가 '완전히 동일'한 행들만 합산
+    merged_detail = df_detail.groupby(['로트번호', '유효일자', '잔여일수'], dropna=False, as_index=False)['수량'].sum()
+    
+    # 선입선출을 위해 잔여일수 기준 정렬
+    merged_detail = merged_detail.sort_values(by='잔여일수').reset_index(drop=True)
+    merged_detail.rename(columns={'수량': '합산 수량'}, inplace=True)
+
+    st.dataframe(
+        merged_detail,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "잔여일수": st.column_config.ProgressColumn("유통기한 잔여", format="%d일", min_value=0, max_value=1095),
+            "합산 수량": st.column_config.NumberColumn("가용 재고", format="%d EA"),
+            "유효일자": st.column_config.DateColumn("유효일자")
+        }
+    )
+    st.caption("※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.")
+
+# ==========================================
+# 2. 데이터 로드 및 전처리
+# ==========================================
+@st.cache_data
+def load_and_process_data(stock_file):
+    mapping_file = "매핑용.xlsx"
     try:
         df_stock = pd.read_excel(stock_file, sheet_name="재고현황", header=1)
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
         df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2")
         df_channel.columns = df_channel.columns.astype(str).str.strip()
-        if '제품코드' not in df_channel.columns:
-            df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2", header=1)
-            df_channel.columns = df_channel.columns.astype(str).str.strip()
-
+        
+        # 키 정규화
         df_stock['상품코드_key'] = df_stock['상품코드'].astype(str).str.strip().str.upper()
         df_channel['제품코드_key'] = df_channel['제품코드'].astype(str).str.strip().str.upper()
 
-        target_cols = ['Customer', '제품코드_key', 'Remarks', 'Sales Team', 'Channel']
-        mapping_sub = df_channel[target_cols].dropna(subset=['제품코드_key']).drop_duplicates('제품코드_key')
+        mapping_sub = df_channel[['Customer', '제품코드_key', 'Remarks', 'Sales Team', 'Channel']].dropna(subset=['제품코드_key']).drop_duplicates('제품코드_key')
         
         df_merged = pd.merge(df_stock, mapping_sub, left_on="상품코드_key", right_on="제품코드_key", how="left")
-        df_merged.drop(columns=['상품코드_key', '제품코드_key'], inplace=True)
         
         df_merged.rename(columns={
             'Customer': '납품처', '상품코드': '제품코드', '화주LOT': '로트번호',
-            '입수량(BOX)': '박스입수', '합계수량': '수량',
-            'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
+            '합계수량': '수량', 'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
         }, inplace=True)
 
+        # 데이터 클리닝
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
-        df_merged = df_merged[df_merged['로트번호'] != '']
-        df_merged = df_merged[df_merged['로트번호'].str.lower() != 'nan']
+        df_merged = df_merged[(df_merged['로트번호'] != '') & (df_merged['로트번호'].str.lower() != 'nan')]
         df_merged = df_merged[~df_merged['로트번호'].str.contains('폐기', na=False)]
         
         df_merged['납품처'] = df_merged['납품처'].fillna('미지정').astype(str).str.strip()
-        df_merged = df_merged[df_merged['납품처'] != '-']
-        
         df_merged['영업팀'] = df_merged['영업팀'].fillna('미분류').astype(str).str.strip()
-        df_merged['채널'] = df_merged['채널'].fillna('미분류').astype(str).str.strip()
         df_merged['특이사항'] = df_merged['특이사항'].fillna('').astype(str).str.strip()
-
-        if '상품바코드' in df_merged.columns:
-            df_merged['상품바코드'] = df_merged['상품바코드'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'[?？]', '', regex=True).str.strip()
 
         if '유효일자' in df_merged.columns:
             df_merged['유효일자'] = pd.to_datetime(df_merged['유효일자'], errors='coerce').dt.strftime('%Y-%m-%d')
             
         return df_merged
     except Exception as e:
-        st.error(f"❌ 데이터 전처리 오류: {e}")
-        st.stop()
+        st.error(f"데이터 연동 에러: {e}")
+        return None
 
-# ---------------------------------------------------------
-# 서버 실행 시 가장 최신 파일을 자동으로 찾아옵니다.
+# 파일 실행
 latest_file = get_latest_stock_file()
 
 if not latest_file:
-    st.error("🚨 폴더에 'Sales_Stock_@@@@@@.xlsx' 형식의 파일이 없습니다.")
+    st.error("폴더 내에 Sales_Stock_*.xlsx 파일이 존재하지 않습니다.")
     st.stop()
 
-# 찾은 최신 파일명을 기반으로 데이터를 로드합니다.
-df_raw = load_filtered_data(latest_file)
-# ---------------------------------------------------------
+df_raw = load_and_process_data(latest_file)
 
 # ==========================================
-# 3. 🚨 사이드바(Sidebar) 고정 검색 및 필터링 UI
+# 3. 사이드바 UI (비즈니스 대시보드 스타일)
 # ==========================================
 with st.sidebar:
-    st.success(f"✅ **자동 업데이트 연동 완료**\n\n현재 읽어온 최신 파일:\n**`{latest_file}`**")
+    st.image("https://www.rohto.co.kr/common/images/logo.png", width=150) # 로고 (연결 안 될 시 텍스트 대체)
+    st.title("Admin Console")
+    st.info(f"📅 **Latest Sync**\n{latest_file}")
     st.markdown("---")
     
-    st.markdown("## 🔍 재고 검색 설정")
+    st.subheader("Filter Option")
+    is_exclusive = st.toggle("🌟 전용 납품 품목만 보기")
     
-    # 1) 단독 납품 토글
-    is_exclusive = st.toggle("🌟 단독 납품(전용) 제품만")
+    all_customers = sorted(df_raw['납품처'].unique().tolist())
+    selected_customer = st.selectbox("🏢 납품처", ["전체"] + all_customers)
     
-    # 2) 납품처 필터
-    all_customers = df_raw['납품처'].unique().tolist()
-    customer_set = set(part.strip() for c in all_customers for part in str(c).split(',') if part.strip() != '-')
-    unique_customers = sorted(list(customer_set))
-    selected_customer = st.selectbox("🏢 납품처 필터", ["전체"] + unique_customers)
+    all_teams = sorted(df_raw['영업팀'].unique().tolist())
+    selected_team = st.selectbox("👥 영업팀", ["전체"] + all_teams)
     
-    # 3) 영업팀 필터
-    all_teams = df_raw['영업팀'].unique().tolist()
-    team_set = set(part.strip() for t in all_teams for part in str(t).split(',') if part.strip() != '-')
-    unique_teams = sorted(list(team_set))
-    selected_team = st.selectbox("👥 영업팀 필터", ["전체"] + unique_teams)
-    
-    # 4) 텍스트 검색
-    search_q = st.text_input("📝 제품명/코드 검색", placeholder="예: 아크네스, 고쿠쥰...")
+    search_q = st.text_input("🔍 Search", placeholder="제품명 또는 코드")
+    st.markdown("---")
+    st.caption("© 2024 Rohto Mentholatum Korea")
 
-# 데이터 필터링 적용
+# 필터링 적용
 df_filtered = df_raw.copy()
-
 if is_exclusive:
     df_filtered = df_filtered[~df_filtered['납품처'].astype(str).str.contains(',', na=False)]
 if selected_customer != "전체":
-    df_filtered = df_filtered[df_filtered['납품처'].str.contains(selected_customer, na=False, regex=False)]
+    df_filtered = df_filtered[df_filtered['납품처'].str.contains(selected_customer, na=False)]
 if selected_team != "전체":
-    df_filtered = df_filtered[df_filtered['영업팀'].str.contains(selected_team, na=False, regex=False)]
+    df_filtered = df_filtered[df_filtered['영업팀'].str.contains(selected_team, na=False)]
 if search_q:
     df_filtered = df_filtered[
-        df_filtered['상품명'].str.contains(search_q, case=False, na=False, regex=False) |
-        df_filtered['제품코드'].str.contains(search_q, case=False, na=False, regex=False)
+        df_filtered['상품명'].str.contains(search_q, case=False, na=False) |
+        df_filtered['제품코드'].str.contains(search_q, case=False, na=False)
     ]
 
 # ==========================================
-# 4. 마스터 테이블 구성 및 버튼 액션 연결 (메인 화면)
+# 4. 메인 대시보드 화면
 # ==========================================
-st.title("📦 가용 재고 마스터링 시스템")
+st.title("Inventory Mastering Dashboard")
 
 if not df_filtered.empty:
-    group_cols = ['상품바코드', '제품코드']
-    df_main = df_filtered.groupby(group_cols).agg({
-        '상품명': 'first', '납품처': 'first', '영업팀': 'first', '채널': 'first', '특이사항': 'first', '수량': 'sum'
+    # 요약 테이블 생성
+    df_main = df_filtered.groupby(['상품바코드', '제품코드']).agg({
+        '상품명': 'first', '납품처': 'first', '영업팀': 'first', '특이사항': 'first', '수량': 'sum'
     }).reset_index()
     
-    df_main.rename(columns={'수량': '총 가용 재고'}, inplace=True)
+    df_main.rename(columns={'수량': '총 재고'}, inplace=True)
     
-    # 메인 상단 헤더 및 다운로드 버튼
-    col_title, col_btn = st.columns([4, 1])
-    with col_title:
-        st.markdown(f"### 📊 요약 재고 현황판 (총 {len(df_main)}개 품목)")
-    with col_btn:
-        st.download_button(
-            label="📥 현재 내역 엑셀 다운로드",
-            data=to_excel(df_filtered),
-            file_name="가용재고_마스터.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    # 상단 지표 영역
+    m1, m2, m3 = st.columns(3)
+    m1.metric("총 취급 품목수", f"{len(df_main)} SKUs")
+    m2.metric("총 가용 수량", f"{df_main['총 재고'].sum():,} EA")
+    with m3:
+        st.write(" ")
+        st.download_button("📥 Excel Export", data=to_excel(df_filtered), file_name=f"Stock_Report_{latest_file}.xlsx")
+
+    st.markdown("---")
     
-    # 테이블 헤더 그리기
-    grid_ratio = [1.5, 1.2, 1.2, 1.5, 3.0, 1.2, 2.0, 1.0]
-    headers = ['납품처', '영업팀', '채널', '제품코드', '상품명', '총 가용 재고', '비고/특이사항', '상세보기']
-    
-    header_cols = st.columns(grid_ratio)
-    for col, h_name in zip(header_cols, headers):
-        col.markdown(f"**{h_name}**")
-    st.markdown("<hr style='margin: 5px 0 10px 0; border-top: 2px solid #bbb;'>", unsafe_allow_html=True)
-    
-    # 데이터 행 반복 출력
+    # 테이블 레이아웃 구현
+    grid_ratio = [1.5, 1.2, 1.5, 3.5, 1.2, 2.0, 1.0]
+    cols = st.columns(grid_ratio)
+    fields = ['납품처', '영업팀', '제품코드', '상품명', '현재고', '특이사항', 'Action']
+    for col, field in zip(cols, fields):
+        col.markdown(f"**{field}**")
+    st.markdown("<div style='border-bottom: 2px solid #006838; margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+
     for idx, row in df_main.iterrows():
-        row_cols = st.columns(grid_ratio)
-        
-        row_cols[0].write(row['납품처'])
-        row_cols[1].write(row['영업팀'])
-        row_cols[2].write(row['채널'])
-        row_cols[3].write(row['제품코드'])
-        row_cols[4].write(row['상품명'])
-        row_cols[5].write(f"{row['총 가용 재고']:,} 개")
-        row_cols[6].write(row['특이사항'])
-        
-# 팝업 호출 버튼
-        if row_cols[7].button("🔎 조회", key=f"btn_{idx}"):
-            df_detail = df_filtered[
-                (df_filtered['상품바코드'] == row['상품바코드']) & 
-                (df_filtered['제품코드'] == row['제품코드'])
-            ][['로트번호', '유효일자', '잔여일수', '수량']].copy()
+        with st.container():
+            r_cols = st.columns(grid_ratio)
+            r_cols[0].write(row['납품처'])
+            r_cols[1].write(row['영업팀'])
+            r_cols[2].write(row['제품코드'])
+            r_cols[3].write(f"**{row['상품명']}**")
+            r_cols[4].write(f"{row['총 재고']:,}")
+            r_cols[5].write(f"<small>{row['특이사항']}</small>", unsafe_allow_html=True)
             
-            # 💡 로트번호, 유효일자, 잔여일수가 '100% 완전히 동일한 행들만' 수량을 합칩니다.
-            df_detail = df_detail.groupby(['로트번호', '유효일자', '잔여일수'], dropna=False, as_index=False)['수량'].sum()
-            
-            # 컬럼명 최종 변경 후 팝업 출력
-            df_detail.rename(columns={'수량': '로트별 수량'}, inplace=True)
-            show_lot_details(df_detail, row['상품명'])
-            df_detail.rename(columns={'수량': '로트별 수량'}, inplace=True)
-            show_lot_details(df_detail, row['상품명'])
+            if r_cols[6].button("상세", key=f"v_{idx}"):
+                df_detail = df_filtered[
+                    (df_filtered['상품바코드'] == row['상품바코드']) & 
+                    (df_filtered['제품코드'] == row['제품코드'])
+                ][['로트번호', '유효일자', '잔여일수', '수량']]
+                show_lot_details(df_detail, row['상품명'])
 else:
-    st.warning("⚠️ 필터 조건에 부합하는 가용 재고 데이터가 존재하지 않습니다.")
+    st.warning("조회된 재고 데이터가 없습니다.")

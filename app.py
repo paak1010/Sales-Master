@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import glob
-import os
 
 # 1. 페이지 기본 설정
 st.set_page_config(page_title="멘소래담 재고 마스터링 시스템 v5", layout="wide", initial_sidebar_state="expanded")
@@ -41,7 +40,7 @@ def show_lot_details(df_detail, product_name):
 
 # --- 🎯 최신 파일 자동 탐색 함수 ---
 def get_latest_stock_file():
-    # 현재 폴더에서 'Sales_Stock_'로 시작하는 모든 엑셀 파일 찾기
+    # 깃허브(서버) 폴더 내에서 'Sales_Stock_'로 시작하는 모든 엑셀 파일 찾기
     stock_files = glob.glob("Sales_Stock_*.xlsx")
     
     if not stock_files:
@@ -104,8 +103,8 @@ def load_filtered_data(stock_file):
         st.error(f"❌ 데이터 전처리 오류: {e}")
         st.stop()
 
-
-# 프로그램 실행 시 가장 최신 파일을 찾습니다.
+# ---------------------------------------------------------
+# 서버 실행 시 가장 최신 파일을 자동으로 찾아옵니다.
 latest_file = get_latest_stock_file()
 
 if not latest_file:
@@ -114,21 +113,19 @@ if not latest_file:
 
 # 찾은 최신 파일명을 기반으로 데이터를 로드합니다.
 df_raw = load_filtered_data(latest_file)
-
+# ---------------------------------------------------------
 
 # ==========================================
 # 3. 🚨 사이드바(Sidebar) 고정 검색 및 필터링 UI
 # ==========================================
 with st.sidebar:
-    st.success(f"✅ **자동 연동 완료**\n\n현재 읽어온 최신 파일:\n`{latest_file}`")
+    st.success(f"✅ **자동 업데이트 연동 완료**\n\n현재 읽어온 최신 파일:\n**`{latest_file}`**")
     st.markdown("---")
     
     st.markdown("## 🔍 재고 검색 설정")
-    st.markdown("스크롤을 내려도 이 검색창은 항상 유지됩니다.")
-    st.markdown("---")
     
     # 1) 단독 납품 토글
-    is_exclusive = st.toggle("🌟 단독 납품(전용) 제품만", help="여러 채널에 분산되지 않은 단일 채널 전용 제품만 표시합니다.")
+    is_exclusive = st.toggle("🌟 단독 납품(전용) 제품만")
     
     # 2) 납품처 필터
     all_customers = df_raw['납품처'].unique().tolist()
@@ -144,16 +141,12 @@ with st.sidebar:
     
     # 4) 텍스트 검색
     search_q = st.text_input("📝 제품명/코드 검색", placeholder="예: 아크네스, 고쿠쥰...")
-    
-    st.markdown("---")
-    st.info("💡 **Tip:** 화면 중앙의 '조회' 버튼을 누르면 세부 LOT가 새창으로 열립니다.")
 
 # 데이터 필터링 적용
 df_filtered = df_raw.copy()
 
 if is_exclusive:
     df_filtered = df_filtered[~df_filtered['납품처'].astype(str).str.contains(',', na=False)]
-
 if selected_customer != "전체":
     df_filtered = df_filtered[df_filtered['납품처'].str.contains(selected_customer, na=False, regex=False)]
 if selected_team != "전체":

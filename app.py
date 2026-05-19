@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import glob
+import os
 
 # 1. 페이지 기본 설정
 st.set_page_config(page_title="멘소래담 재고 마스터링 시스템 v5", layout="wide", initial_sidebar_state="expanded")
@@ -37,10 +39,21 @@ def show_lot_details(df_detail, product_name):
         }
     )
 
+# --- 🎯 최신 파일 자동 탐색 함수 ---
+def get_latest_stock_file():
+    # 현재 폴더에서 'Sales_Stock_'로 시작하는 모든 엑셀 파일 찾기
+    stock_files = glob.glob("Sales_Stock_*.xlsx")
+    
+    if not stock_files:
+        return None
+        
+    # 파일명(날짜) 기준 역순 정렬 후 가장 첫 번째(최신) 파일 반환
+    latest_file = sorted(stock_files, reverse=True)[0]
+    return latest_file
+
 # 2. 데이터 로드 및 정밀 전처리
 @st.cache_data
-def load_filtered_data():
-    stock_file = "Sales_Stock_260519.xlsx"
+def load_filtered_data(stock_file):
     mapping_file = "매핑용.xlsx"
     
     try:
@@ -91,13 +104,25 @@ def load_filtered_data():
         st.error(f"❌ 데이터 전처리 오류: {e}")
         st.stop()
 
-df_raw = load_filtered_data()
+
+# 프로그램 실행 시 가장 최신 파일을 찾습니다.
+latest_file = get_latest_stock_file()
+
+if not latest_file:
+    st.error("🚨 폴더에 'Sales_Stock_@@@@@@.xlsx' 형식의 파일이 없습니다.")
+    st.stop()
+
+# 찾은 최신 파일명을 기반으로 데이터를 로드합니다.
+df_raw = load_filtered_data(latest_file)
+
 
 # ==========================================
 # 3. 🚨 사이드바(Sidebar) 고정 검색 및 필터링 UI
 # ==========================================
-# 좌측에 항상 고정되는 패널입니다. 스크롤을 내려도 절대 사라지지 않습니다.
 with st.sidebar:
+    st.success(f"✅ **자동 연동 완료**\n\n현재 읽어온 최신 파일:\n`{latest_file}`")
+    st.markdown("---")
+    
     st.markdown("## 🔍 재고 검색 설정")
     st.markdown("스크롤을 내려도 이 검색창은 항상 유지됩니다.")
     st.markdown("---")

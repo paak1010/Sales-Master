@@ -203,13 +203,19 @@ if not df_filtered.empty:
         row_cols[5].write(f"{row['총 가용 재고']:,} 개")
         row_cols[6].write(row['특이사항'])
         
-        # 팝업 호출 버튼
+# 팝업 호출 버튼
         if row_cols[7].button("🔎 조회", key=f"btn_{idx}"):
             df_detail = df_filtered[
                 (df_filtered['상품바코드'] == row['상품바코드']) & 
                 (df_filtered['제품코드'] == row['제품코드'])
             ][['로트번호', '유효일자', '잔여일수', '수량']].copy()
             
+            # 💡 로트번호, 유효일자, 잔여일수가 '100% 완전히 동일한 행들만' 수량을 합칩니다.
+            df_detail = df_detail.groupby(['로트번호', '유효일자', '잔여일수'], dropna=False, as_index=False)['수량'].sum()
+            
+            # 컬럼명 최종 변경 후 팝업 출력
+            df_detail.rename(columns={'수량': '로트별 수량'}, inplace=True)
+            show_lot_details(df_detail, row['상품명'])
             df_detail.rename(columns={'수량': '로트별 수량'}, inplace=True)
             show_lot_details(df_detail, row['상품명'])
 else:

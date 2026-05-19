@@ -115,7 +115,6 @@ def show_lot_details(df_detail, product_name):
         }
     )
     st.caption("※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.")
-
 # ==========================================
 # 2. 데이터 로드 및 전처리
 # ==========================================
@@ -123,12 +122,19 @@ def show_lot_details(df_detail, product_name):
 def load_and_process_data(stock_file):
     mapping_file = "매핑용.xlsx"
     try:
+        # 재고 데이터 로드
         df_stock = pd.read_excel(stock_file, sheet_name="재고현황", header=1)
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
+        # 매핑 데이터 로드
         df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2")
         df_channel.columns = df_channel.columns.astype(str).str.strip()
         
+        # 💡 [복구된 핵심 로직] 만약 첫 줄에 '제품코드'가 없다면, 두 번째 줄(header=1)을 헤더로 다시 읽어옵니다!
+        if '제품코드' not in df_channel.columns:
+            df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2", header=1)
+            df_channel.columns = df_channel.columns.astype(str).str.strip()
+            
         # 키 정규화
         df_stock['상품코드_key'] = df_stock['상품코드'].astype(str).str.strip().str.upper()
         df_channel['제품코드_key'] = df_channel['제품코드'].astype(str).str.strip().str.upper()
@@ -151,12 +157,15 @@ def load_and_process_data(stock_file):
         df_merged['영업팀'] = df_merged['영업팀'].fillna('미분류').astype(str).str.strip()
         df_merged['특이사항'] = df_merged['특이사항'].fillna('').astype(str).str.strip()
 
+        if '상품바코드' in df_merged.columns:
+            df_merged['상품바코드'] = df_merged['상품바코드'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'[?？]', '', regex=True).str.strip()
+
         if '유효일자' in df_merged.columns:
             df_merged['유효일자'] = pd.to_datetime(df_merged['유효일자'], errors='coerce').dt.strftime('%Y-%m-%d')
             
         return df_merged
     except Exception as e:
-        st.error(f"데이터 연동 에러: {e}")
+        st.error(f"데이터 연동 에러 원인: {e}")
         return None
 
 # 파일 실행
@@ -168,6 +177,9 @@ if not latest_file:
 
 df_raw = load_and_process_data(latest_file)
 
+# 💡 [추가된 안전장치] 엑셀 처리 중 에러가 나서 df_raw가 None이 되면 아래 코드를 멈춥니다.
+if df_raw is None:
+    st.stop()
 # ==========================================
 # 3. 사이드바 UI (비즈니스 대시보드 스타일)
 # ==========================================

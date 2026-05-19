@@ -2,18 +2,21 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-# 1. 페이지 설정
-st.set_page_config(page_title="멘소래담 재고 마스터링 시스템", layout="wide")
+# 1. 페이지 기본 설정
+st.set_page_config(page_title="멘소래담 재고 마스터링 시스템 v4", layout="wide")
 
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
-    .stDataFrame { border: 1px solid #e6e9ef; border-radius: 10px; }
-    .stDownloadButton > button { width: 100%; background-color: #007bff; color: white; border-radius: 5px; }
+    /* 테이블 형태로 보기 좋게 만들기 위한 스타일 고정 */
+    .reportview-container .main .block-container { max-width: 95%; }
+    .stButton > button { width: 100%; background-color: #f0f2f6; color: #31333F; border-radius: 5px; border: 1px solid #d3d3d3; }
+    .stButton > button:hover { background-color: #007bff; color: white; border: 1px solid #007bff; }
+    .stDownloadButton > button { background-color: #007bff; color: white; border-radius: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("📦 가용 재고 마스터링 및 조회 시스템")
+st.title("📦 가용 재고 마스터링 시스템")
 
 # --- 엑셀 변환 헬퍼 함수 ---
 def to_excel(df):
@@ -21,6 +24,21 @@ def to_excel(df):
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='재고조회결과')
     return output.getvalue()
+
+# --- 🚨 팝업창(모달 새창) 정의 함수 ---
+@st.dialog("📋 상세 LOT 및 유효일자 명세")
+def show_lot_details(df_detail, product_name):
+    st.markdown(f"**품명:** {product_name}")
+    st.dataframe(
+        df_detail,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "잔여일수": st.column_config.ProgressColumn("잔여일수", format="%d 일", min_value=0, max_value=1095),
+            "로트별 수량": st.column_config.NumberColumn("로트별 수량", format="%d 개"),
+            "유효일자": st.column_config.DateColumn("유효일자 📅")
+        }
+    )
 
 # 2. 데이터 로드 및 정밀 전처리
 @st.cache_data
@@ -44,7 +62,7 @@ def load_filtered_data():
         df_stock['상품코드_key'] = df_stock['상품코드'].astype(str).str.strip().str.upper()
         df_channel['제품코드_key'] = df_channel['제품코드'].astype(str).str.strip().str.upper()
 
-        # --- 3) 데이터 병합 (요청하신 열만 정확히 추출) ---
+        # --- 3) 데이터 병합 (요청하신 필수 열만 추출) ---
         target_cols = ['Customer', '제품코드_key', 'Remarks', 'Sales Team', 'Channel']
         mapping_sub = df_channel[target_cols].dropna(subset=['제품코드_key']).drop_duplicates('제품코드_key')
         
@@ -57,13 +75,13 @@ def load_filtered_data():
             'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
         }, inplace=True)
 
-        # --- 4) 로트번호 및 가용 재고 필터링 ---
+        # --- 4) 가용 재고 기본 필터링 ---
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
         df_merged = df_merged[df_merged['로트번호'] != '']
         df_merged = df_merged[df_merged['로트번호'].str.lower() != 'nan']
         df_merged = df_merged[~df_merged['로트번호'].str.contains('폐기', na=False)]
         
-        # --- 5) 🚨 피드백 반영: 납품처 및 특이사항에서 "-" 제외 로직 ---
+        # --- 5) 🚨 피드백 반영: 납품처가 "-"인 데이터 완전 필터링 ---
         df_merged['납품처'] = df_merged['납품처'].fillna('미지정').astype(str).str.strip()
         df_merged = df_merged[df_merged['납품처'] != '-']
         
@@ -71,7 +89,7 @@ def load_filtered_data():
         df_merged['채널'] = df_merged['채널'].fillna('미분류').astype(str).str.strip()
         df_merged['특이사항'] = df_merged['특이사항'].fillna('').astype(str).str.strip()
 
-        # --- 6) 상품바코드 및 유효일자 클렌징 ---
+        # --- 6) 상품바코드 클렌징 ---
         if '상품바코드' in df_merged.columns:
             df_merged['상품바코드'] = df_merged['상품바코드'].fillna('').astype(str)
             df_merged['상품바코드'] = df_merged['상품바코드'].str.replace(r'\.0$', '', regex=True)
@@ -83,16 +101,15 @@ def load_filtered_data():
             
         return df_merged
     except Exception as e:
-        st.error(f"❌ 데이터 전처리 중 오류 발생: {e}")
+        st.error(f"❌ 데이터 전처리 오류: {e}")
         st.stop()
 
-# 정제된 가용 원본 데이터 로드
 df_raw = load_filtered_data()
 
 # ==========================================
-# 3. 다차원 사이드바/상단 필터 구성
+# 3. 검색 및 필터링 UI
 # ==========================================
-st.markdown("### 🔍 검색 및 필터링")
+st.markdown("### 🔍 필터 설정")
 col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
 
 with col_f1:
@@ -108,7 +125,7 @@ with col_f2:
     selected_team = st.selectbox("👥 영업팀 선택", ["전체"] + unique_teams)
 
 with col_f3:
-    search_q = st.text_input("📝 제품명 또는 제품코드 검색", placeholder="검색어를 입력하세요 (예: 아크네스, 고쿠쥰, ME...)")
+    search_q = st.text_input("📝 제품명 또는 제품코드 검색", placeholder="검색어를 입력하세요...")
 
 # 데이터 필터링 적용
 df_filtered = df_raw.copy()
@@ -123,77 +140,62 @@ if search_q:
     ]
 
 # ==========================================
-# 4. 🚨 핵심 기능: 바코드/ME코드 기준 그룹화 및 토글 UI
+# 4. 🚨 마스터 테이블 구성 및 버튼 액션 연결
 # ==========================================
 st.markdown("---")
 
 if not df_filtered.empty:
-    # 1) 메인 가시성을 위해 바코드와 제품코드 기준으로 묶어서 합계수량(총 가용 재고) 산출
-    # 그룹화할 때 텍스트 정보(상품명, 납품처, 영업팀, 채널, 특이사항) 리스트의 첫 항목을 유지
+    # 바코드와 제품코드 기준으로 묶어서 재고 합산 (마스터 테이블 빌드)
     group_cols = ['상품바코드', '제품코드']
-    
     df_main = df_filtered.groupby(group_cols).agg({
-        '상품명': 'first',
-        '납품처': 'first',
-        '영업팀': 'first',
-        '채널': 'first',
-        '특이사항': 'first',
-        '수량': 'sum' # 재고 수량 합산
+        '상품명': 'first', '납품처': 'first', '영업팀': 'first', '채널': 'first', '특이사항': 'first', '수량': 'sum'
     }).reset_index()
     
     df_main.rename(columns={'수량': '총 가용 재고'}, inplace=True)
     
-    # 다운로드용 데이터 준비
+    # 상단 다운로드 버튼 배치
     st.download_button(
-        label="📥 필터링된 전체 내역 엑셀 다운로드",
+        label="📥 현재 필터링된 전체 내역 엑셀 다운로드",
         data=to_excel(df_filtered),
-        file_name="가용재고_조회결과.xlsx",
+        file_name="가용재고_마스터.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     
-    st.markdown(f"### 📊 요약 재고 현황판 (총 {len(df_main)}개의 핵심 품목)")
+    st.markdown(f"### 📊 요약 재고 현황판 (총 {len(df_main)}개 품목)")
     
-    # 메인 서머리 테이블 출력 (물리적 상태, 전용 여부 제외됨)
-    main_display_cols = ['납품처', '영업팀', '채널', '제품코드', '상품명', '총 가용 재고', '특이사항', '상품바코드']
-    st.dataframe(
-        df_main[main_display_cols],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "총 가용 재고": st.column_config.NumberColumn("총 가용 재고", format="%d 개"),
-            "특이사항": st.column_config.TextColumn("비고/특이사항 📝")
-        }
-    )
+    # --- 🚨 행 끝에 버튼이 삽입된 테이블 UI 직접 빌드 ---
+    # 테이블 헤더 그리기
+    grid_ratio = [1.5, 1.2, 1.2, 1.5, 3.0, 1.2, 2.0, 1.0] # 열 크기 비율 조정
+    headers = ['납품처', '영업팀', '채널', '제품코드', '상품명', '총 가용 재고', '비고/특이사항', '상세보기']
     
-    # 2) 상세 정보 조회를 위한 토글 섹션 (끝에 버튼을 누르는 효과 대체)
-    st.markdown("### 🔍 품목별 상세 LOT 및 유효일자 내역")
-    st.caption("아래 품목을 클릭하면 해당 제품 내에 포함된 상세 로트(LOT) 번호, 유효일자, 잔여일수 명세를 바로 확인할 수 있습니다.")
+    header_cols = st.columns(grid_ratio)
+    for col, h_name in zip(header_cols, headers):
+        col.markdown(f"**{h_name}**")
+    st.markdown("<hr style='margin: 5px 0 10px 0; border-top: 2px solid #bbb;'>", unsafe_allow_html=True)
     
+    # 데이터 행 반복 출력
     for idx, row in df_main.iterrows():
-        bcode = row['상품바코드']
-        pcode = row['제품코드']
-        pname = row['상품명']
-        total_stock = row['총 가용 재고']
+        row_cols = st.columns(grid_ratio)
         
-        # 해당 그룹에 속하는 상세 로트 데이터들만 원본에서 필터링하여 추출
-        df_detail = df_filtered[
-            (df_filtered['상품바코드'] == bcode) & 
-            (df_filtered['제품코드'] == pcode)
-        ][['로트번호', '유효일자', '잔여일수', '수량']].copy()
+        row_cols[0].write(row['납품처'])
+        row_cols[1].write(row['영업팀'])
+        row_cols[2].write(row['채널'])
+        row_cols[3].write(row['제품코드'])
+        row_cols[4].write(row['상품명'])
+        row_cols[5].write(f"{row['총 가용 재고']:,} 개")
+        row_cols[6].write(row['특이사항'])
         
-        df_detail.rename(columns={'수량': '로트별 수량'}, inplace=True)
-        
-        # 익스팬더 타이틀을 버튼처럼 활용
-        with st.expander(f"📋 [조회] {pcode} | {pname} (총 {total_stock}개)"):
-            st.dataframe(
-                df_detail,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "잔여일수": st.column_config.ProgressColumn("잔여일수", format="%d 일", min_value=0, max_value=1095),
-                    "로트별 수량": st.column_config.NumberColumn("로트별 수량", format="%d 개"),
-                    "유효일자": st.column_config.DateColumn("유효일자 📅")
-                }
-            )
+        # 🚨 마지막 열에 새창 팝업을 띄우는 버튼 배치
+        if row_cols[7].button("🔎 조회", key=f"btn_{idx}"):
+            # 버튼을 누른 해당 행의 바코드와 제품코드에 일치하는 세부 로트 정보 추출
+            df_detail = df_filtered[
+                (df_filtered['상품바코드'] == row['상품바코드']) & 
+                (df_filtered['제품코드'] == row['제품코드'])
+            ][['로트번호', '유효일자', '잔여일수', '수량']].copy()
+            
+            df_detail.rename(columns={'수량': '로트별 수량'}, inplace=True)
+            
+            # 팝업 함수 호출
+            show_lot_details(df_detail, row['상품명'])
 else:
     st.warning("⚠️ 필터 조건에 부합하는 가용 재고 데이터가 존재하지 않습니다.")

@@ -132,7 +132,7 @@ def load_and_process_data(stock_file):
         df_merged = df_merged[~df_merged['로트번호'].str.contains('폐기', na=False)]
         
         df_merged['납품처'] = df_merged['납품처'].fillna('미지정').astype(str).str.strip()
-        df_merged = df_merged[df_merged['납품처'] != '-'] # '-' 제거
+        df_merged = df_merged[df_merged['납품처'] != '-']
         
         df_merged['영업팀'] = df_merged['영업팀'].fillna('미분류').astype(str).str.strip()
         df_merged['특이사항'] = df_merged['특이사항'].fillna('').astype(str).str.strip()
@@ -148,7 +148,7 @@ def load_and_process_data(stock_file):
         st.error(f"데이터 연동 에러: {e}")
         return None
 
-# 앱 실행
+# 앱 실행 (최신 파일 스캔)
 latest_file = get_latest_stock_file()
 if not latest_file:
     st.error("폴더 내에 Sales_Stock_*.xlsx 파일이 존재하지 않습니다.")
@@ -158,47 +158,67 @@ df_raw = load_and_process_data(latest_file)
 if df_raw is None: st.stop()
 
 # ==========================================
-# 3. 사이드바 UI (로고 교체 및 디자인)
+# 3. 사이드바 UI (구조 재배치 및 필터 리스트 정제)
 # ==========================================
 with st.sidebar:
-    # 💡 [교체된 로고 부분] 
-    # logo.png가 깃허브 폴더에 있어야 합니다.
+    # 1. 최상단 로고
     if os.path.exists("logo.png"):
         st.image("logo.png", width=200)
     else:
-        st.subheader("Mentholatum") # 로고 없을 때 대비
+        st.subheader("Mentholatum")
         
-    st.title("Admin Console")
-    st.info(f"📅 **Latest Sync**\n{latest_file}")
     st.markdown("---")
     
+    # 2. 필터 옵션 영역
     st.subheader("Filter Option")
+    
     is_exclusive = st.toggle("🌟 전용 납품 품목만 보기")
+    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 12px 0;'></div>", unsafe_allow_html=True)
     
-    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 15px 0;'></div>", unsafe_allow_html=True)
-    
-    all_customers = sorted(df_raw['납품처'].unique().tolist())
+    # 납품처 리스트 정제 (콤마 분리 후 고유값 추출)
+    customer_set = set(part.strip() for c in df_raw['납품처'].dropna() for part in str(c).split(','))
+    all_customers = sorted(list(customer_set))
     selected_customer = st.selectbox("🏢 납품처", ["전체"] + all_customers)
     
-    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 15px 0;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 12px 0;'></div>", unsafe_allow_html=True)
     
-    all_teams = sorted(df_raw['영업팀'].unique().tolist())
+    # 영업팀 리스트 정제 (콤마 분리 후 고유값 추출)
+    team_set = set(part.strip() for t in df_raw['영업팀'].dropna() for part in str(t).split(','))
+    all_teams = sorted(list(team_set))
     selected_team = st.selectbox("👥 영업팀", ["전체"] + all_teams)
     
-    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 15px 0;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 12px 0;'></div>", unsafe_allow_html=True)
     
     search_q = st.text_input("🔍 Search", placeholder="제품명 또는 코드")
+    
     st.markdown("---")
+    
+    # 3. 관리 정보 영역 (필터 아래로 배치)
+    st.subheader("Admin Console")
+    st.info(f"📅 **Latest Sync**\n{latest_file}")
+    
     st.caption("© 2026 Rohto Mentholatum Korea")
 
-# 필터링 적용
+# ==========================================
+# 필터링 로직 (Exact Match 적용)
+# ==========================================
 df_filtered = df_raw.copy()
+
 if is_exclusive:
     df_filtered = df_filtered[~df_filtered['납품처'].astype(str).str.contains(',', na=False)]
+
 if selected_customer != "전체":
-    df_filtered = df_filtered[df_filtered['납품처'].str.contains(selected_customer, na=False)]
+    # 정확도 100% 일치 필터링
+    df_filtered = df_filtered[
+        df_filtered['납품처'].apply(lambda x: selected_customer in [c.strip() for c in str(x).split(',')])
+    ]
+
 if selected_team != "전체":
-    df_filtered = df_filtered[df_filtered['영업팀'].str.contains(selected_team, na=False)]
+    # 정확도 100% 일치 필터링
+    df_filtered = df_filtered[
+        df_filtered['영업팀'].apply(lambda x: selected_team in [t.strip() for t in str(x).split(',')])
+    ]
+
 if search_q:
     df_filtered = df_filtered[
         df_filtered['상품명'].str.contains(search_q, case=False, na=False) |

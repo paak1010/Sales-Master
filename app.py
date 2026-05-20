@@ -75,8 +75,11 @@ def get_latest_stock_file():
     latest_file = sorted(stock_files, reverse=True)[0]
     return latest_file
 
+# 기존 코드: @st.dialog("📋 로트별 상세 재고 명세")
+# 👇 아래처럼 뒤에 width="large" 옵션을 추가해 주세요!
+
 # --- 🚨 상세 팝업창 (동일 로트 합산) ---
-@st.dialog("📋 로트별 상세 재고 명세")
+@st.dialog("📋 로트별 상세 재고 명세", width="large")
 def show_lot_details(df_detail, product_name):
     st.subheader(f"제품명: {product_name}")
     

@@ -136,7 +136,7 @@ def load_and_process_data(stock_file, mapping_mtime):
         }, inplace=True)
 
         # ==========================================
-        # 💡 [핵심 데이터 클리닝] 보류 및 불량 로트 완벽 제거
+        # 💡 [핵심 데이터 클리닝] 보류, 불량, 회송예정 등 완벽 제거
         # ==========================================
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
         
@@ -144,7 +144,8 @@ def load_and_process_data(stock_file, mapping_mtime):
         df_merged = df_merged[(df_merged['로트번호'] != '') & (df_merged['로트번호'].str.lower() != 'nan')]
         
         # 2. 가용 불가능한 상태의 로트들 모두 삭제 (대소문자 무시)
-        exclude_lots = '임시적치|불량|ZPK|약국반품|폐기'
+        # 👉 '회송예정'이 새롭게 추가되었습니다!
+        exclude_lots = '임시적치|불량|ZPK|약국반품|폐기|회송예정'
         df_merged = df_merged[~df_merged['로트번호'].str.contains(exclude_lots, case=False, na=False)]
         
         # ==========================================

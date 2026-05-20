@@ -16,14 +16,49 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 커스텀 CSS: 기업용 대시보드 느낌 구현
+# 커스텀 CSS: 배경색 강제 지정 제거 (다크/라이트 모드 자동 호환)
 st.markdown("""
     <style>
-    /* 폰트 설정 및 배경색 */
+    /* 폰트 설정 */
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
     * { font-family: 'Pretendard', sans-serif; }
     
-    .stApp { background-color: #f8f9fa; }
+    /* 헤더/푸터 숨기기 */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* 사이드바 스타일링 (구분선만 유지) */
+    [data-testid="stSidebar"] {
+        border-right: 1px solid #e0e0e0;
+    }
+    
+    /* 버튼 스타일링 (배경을 투명하게 두어 테마에 적응, 멘소래담 초록 포인트) */
+    .stButton > button {
+        width: 100%;
+        background-color: transparent; 
+        color: #006838;
+        border: 1px solid #006838;
+        border-radius: 4px;
+        font-weight: 600;
+        transition: 0.3s;
+    }
+    .stButton > button:hover {
+        background-color: #006838;
+        color: #ffffff !important;
+    }
+
+    /* 텍스트 스타일 (색상 고정 제거, 굵기만 유지) */
+    h1 { font-weight: 800; letter-spacing: -1px; }
+    h3 { color: #006838; font-weight: 700; }
+    
+    /* 데이터프레임 깔끔하게 */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
     /* 헤더/푸터 숨기기 */
     #MainMenu {visibility: hidden;}

@@ -78,10 +78,11 @@ def get_latest_stock_file():
 # 기존 코드: @st.dialog("📋 로트별 상세 재고 명세")
 # 👇 아래처럼 뒤에 width="large" 옵션을 추가해 주세요!
 
-# --- 🚨 상세 팝업창 (동일 로트 합산) ---
+# --- 🚨 상세 팝업창 (동일 로트 합산 & 글자 크기 확대) ---
 @st.dialog("📋 로트별 상세 재고 명세", width="large")
 def show_lot_details(df_detail, product_name):
-    st.subheader(f"제품명: {product_name}")
+    # 💡 1. 제품명 텍스트를 훨씬 크고 굵게 변경 (HTML 적용)
+    st.markdown(f"<h3 style='font-size: 24px; color: #006838; margin-bottom: 20px;'>📦 {product_name}</h3>", unsafe_allow_html=True)
     
     # 동일한 로트/유효일/잔여일 데이터 합산
     merged_detail = df_detail.groupby(['로트번호', '유효일자', '잔여일수'], dropna=False, as_index=False)['수량'].sum()
@@ -90,8 +91,15 @@ def show_lot_details(df_detail, product_name):
     merged_detail = merged_detail.sort_values(by='잔여일수').reset_index(drop=True)
     merged_detail.rename(columns={'수량': '합산 수량'}, inplace=True)
 
+    # 💡 2. 표(데이터프레임) 내부 글자 크기 키우기 (Pandas Styler 적용)
+    # font-size 수치를 16px에서 18px, 20px 등으로 더 키우실 수도 있습니다.
+    styled_df = merged_detail.style.set_properties(**{
+        'font-size': '16px',
+        'font-weight': '500'
+    })
+
     st.dataframe(
-        merged_detail,
+        styled_df, # 일반 df 대신 스타일이 적용된 styled_df를 넣습니다.
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -100,7 +108,7 @@ def show_lot_details(df_detail, product_name):
             "유효일자": st.column_config.DateColumn("유효일자")
         }
     )
-    st.caption("※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.")
+    st.markdown("<p style='font-size: 14px; color: gray;'>※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.</p>", unsafe_allow_html=True)
 
 # ==========================================
 # 2. 데이터 로드 및 전처리

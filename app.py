@@ -183,24 +183,42 @@ if df_raw is None:
 # ==========================================
 # 3. 사이드바 UI (비즈니스 대시보드 스타일)
 # ==========================================
+# ==========================================
+# 3. 사이드바 UI (비즈니스 대시보드 스타일)
+# ==========================================
 with st.sidebar:
-    st.image("https://www.rohto.co.kr/common/images/logo.png", width=150) # 로고 (연결 안 될 시 텍스트 대체)
+    st.image("https://www.rohto.co.kr/common/images/logo.png", width=150) # 로고
     st.title("Admin Console")
     st.info(f"📅 **Latest Sync**\n{latest_file}")
     st.markdown("---")
     
     st.subheader("Filter Option")
+    
+    # 1. 단독 납품 토글
     is_exclusive = st.toggle("🌟 전용 납품 품목만 보기")
     
+    # --- 희미한 구분선 ---
+    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 15px 0;'></div>", unsafe_allow_html=True)
+    
+    # 2. 납품처 필터
     all_customers = sorted(df_raw['납품처'].unique().tolist())
     selected_customer = st.selectbox("🏢 납품처", ["전체"] + all_customers)
     
+    # --- 희미한 구분선 ---
+    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 15px 0;'></div>", unsafe_allow_html=True)
+    
+    # 3. 영업팀 필터
     all_teams = sorted(df_raw['영업팀'].unique().tolist())
     selected_team = st.selectbox("👥 영업팀", ["전체"] + all_teams)
     
+    # --- 희미한 구분선 ---
+    st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 15px 0;'></div>", unsafe_allow_html=True)
+    
+    # 4. 검색창
     search_q = st.text_input("🔍 Search", placeholder="제품명 또는 코드")
+    
     st.markdown("---")
-    st.caption("© 2024 Rohto Mentholatum Korea")
+    st.caption("© 2026 Rohto Mentholatum Korea")
 
 # 필터링 적용
 df_filtered = df_raw.copy()

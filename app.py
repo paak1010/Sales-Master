@@ -67,7 +67,7 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='Inventory_Report')
     return output.getvalue()
 
-# --- 🎯 최신 파일 자동 탐색 함수 ---
+# --- 🎯 최신 파일 자동 탐색 함수 (GitHub용) ---
 def get_latest_stock_file():
     stock_files = glob.glob("Sales_Stock_*.xlsx")
     if not stock_files:
@@ -75,13 +75,9 @@ def get_latest_stock_file():
     latest_file = sorted(stock_files, reverse=True)[0]
     return latest_file
 
-# 기존 코드: @st.dialog("📋 로트별 상세 재고 명세")
-# 👇 아래처럼 뒤에 width="large" 옵션을 추가해 주세요!
-
-# --- 🚨 상세 팝업창 (동일 로트 합산 & 글자 크기 확대) ---
+# --- 🚨 상세 팝업창 (동일 로트 합산 & 큰 글씨 & 넓은 화면) ---
 @st.dialog("📋 로트별 상세 재고 명세", width="large")
 def show_lot_details(df_detail, product_name):
-    # 💡 1. 제품명 텍스트를 훨씬 크고 굵게 변경 (HTML 적용)
     st.markdown(f"<h3 style='font-size: 24px; color: #006838; margin-bottom: 20px;'>📦 {product_name}</h3>", unsafe_allow_html=True)
     
     # 동일한 로트/유효일/잔여일 데이터 합산
@@ -91,15 +87,14 @@ def show_lot_details(df_detail, product_name):
     merged_detail = merged_detail.sort_values(by='잔여일수').reset_index(drop=True)
     merged_detail.rename(columns={'수량': '합산 수량'}, inplace=True)
 
-    # 💡 2. 표(데이터프레임) 내부 글자 크기 키우기 (Pandas Styler 적용)
-    # font-size 수치를 16px에서 18px, 20px 등으로 더 키우실 수도 있습니다.
+    # 표 내부 글자 크기 확대 스타일 적용
     styled_df = merged_detail.style.set_properties(**{
         'font-size': '16px',
         'font-weight': '500'
     })
 
     st.dataframe(
-        styled_df, # 일반 df 대신 스타일이 적용된 styled_df를 넣습니다.
+        styled_df,
         use_container_width=True,
         hide_index=True,
         column_config={
@@ -111,15 +106,18 @@ def show_lot_details(df_detail, product_name):
     st.markdown("<p style='font-size: 14px; color: gray;'>※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.</p>", unsafe_allow_html=True)
 
 # ==========================================
-# 2. 데이터 로드 및 전처리
+# 2. 데이터 로드 및 전처리 (매핑파일 캐시 감시 로직 추가)
 # ==========================================
+# 💡 mapping_mtime 인자를 추가하여 매핑 파일이 바뀌면 캐시가 강제로 갱신되도록 합니다.
 @st.cache_data
-def load_and_process_data(stock_file):
+def load_and_process_data(stock_file, mapping_mtime):
     mapping_file = "매핑용.xlsx"
     try:
+        # 재고 데이터 로드
         df_stock = pd.read_excel(stock_file, sheet_name="재고현황", header=1)
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
+        # 매핑 데이터 로드
         df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2")
         df_channel.columns = df_channel.columns.astype(str).str.strip()
         
@@ -138,12 +136,13 @@ def load_and_process_data(stock_file):
             '합계수량': '수량', 'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
         }, inplace=True)
 
+        # 데이터 클리닝
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
         df_merged = df_merged[(df_merged['로트번호'] != '') & (df_merged['로트번호'].str.lower() != 'nan')]
         df_merged = df_merged[~df_merged['로트번호'].str.contains('폐기', na=False)]
         
         df_merged['납품처'] = df_merged['납품처'].fillna('미지정').astype(str).str.strip()
-        df_merged = df_merged[df_merged['납품처'] != '-']
+        df_merged = df_merged[df_merged['납품처'] != '-'] # '-' 데이터 제거
         
         df_merged['영업팀'] = df_merged['영업팀'].fillna('미분류').astype(str).str.strip()
         df_merged['특이사항'] = df_merged['특이사항'].fillna('').astype(str).str.strip()
@@ -159,13 +158,16 @@ def load_and_process_data(stock_file):
         st.error(f"데이터 연동 에러: {e}")
         return None
 
-# 앱 실행 (최신 파일 스캔)
+# 앱 실행 데이터 준비
 latest_file = get_latest_stock_file()
 if not latest_file:
     st.error("폴더 내에 Sales_Stock_*.xlsx 파일이 존재하지 않습니다.")
     st.stop()
 
-df_raw = load_and_process_data(latest_file)
+# 💡 매핑용.xlsx 파일의 최근 수정 시간을 체크하여 캐시 시스템에 전달합니다.
+mapping_mtime = os.path.getmtime("매핑용.xlsx") if os.path.exists("매핑용.xlsx") else 0
+
+df_raw = load_and_process_data(latest_file, mapping_mtime)
 if df_raw is None: st.stop()
 
 # ==========================================
@@ -186,15 +188,15 @@ with st.sidebar:
     is_exclusive = st.toggle("🌟 전용 납품 품목만 보기")
     st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 12px 0;'></div>", unsafe_allow_html=True)
     
-    # 납품처 리스트 정제 (콤마 분리 후 고유값 추출)
-    customer_set = set(part.strip() for c in df_raw['납품처'].dropna() for part in str(c).split(','))
+    # 납품처 리스트 정제 (콤마 분리 후 고유값 추출 & 공백 제거)
+    customer_set = set(part.strip() for c in df_raw['납품처'].dropna() for part in str(c).split(',') if part.strip())
     all_customers = sorted(list(customer_set))
     selected_customer = st.selectbox("🏢 납품처", ["전체"] + all_customers)
     
     st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 12px 0;'></div>", unsafe_allow_html=True)
     
-    # 영업팀 리스트 정제 (콤마 분리 후 고유값 추출)
-    team_set = set(part.strip() for t in df_raw['영업팀'].dropna() for part in str(t).split(','))
+    # 영업팀 리스트 정제
+    team_set = set(part.strip() for t in df_raw['영업팀'].dropna() for part in str(t).split(',') if part.strip())
     all_teams = sorted(list(team_set))
     selected_team = st.selectbox("👥 영업팀", ["전체"] + all_teams)
     
@@ -219,13 +221,13 @@ if is_exclusive:
     df_filtered = df_filtered[~df_filtered['납품처'].astype(str).str.contains(',', na=False)]
 
 if selected_customer != "전체":
-    # 정확도 100% 일치 필터링
+    # 100% 정확도 매칭 필터링 (노브랜드/트레이더스 섞임 방지)
     df_filtered = df_filtered[
         df_filtered['납품처'].apply(lambda x: selected_customer in [c.strip() for c in str(x).split(',')])
     ]
 
 if selected_team != "전체":
-    # 정확도 100% 일치 필터링
+    # 영업팀 100% 정확도 매칭 필터링
     df_filtered = df_filtered[
         df_filtered['영업팀'].apply(lambda x: selected_team in [t.strip() for t in str(x).split(',')])
     ]

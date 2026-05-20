@@ -106,9 +106,8 @@ def show_lot_details(df_detail, product_name):
     st.markdown("<p style='font-size: 14px; color: gray;'>※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.</p>", unsafe_allow_html=True)
 
 # ==========================================
-# 2. 데이터 로드 및 전처리 (매핑파일 캐시 감시 로직 추가)
+# 2. 데이터 로드 및 전처리 (불량/보류 재고 필터링 추가)
 # ==========================================
-# 💡 mapping_mtime 인자를 추가하여 매핑 파일이 바뀌면 캐시가 강제로 갱신되도록 합니다.
 @st.cache_data
 def load_and_process_data(stock_file, mapping_mtime):
     mapping_file = "매핑용.xlsx"
@@ -136,13 +135,21 @@ def load_and_process_data(stock_file, mapping_mtime):
             '합계수량': '수량', 'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
         }, inplace=True)
 
-        # 데이터 클리닝
+        # ==========================================
+        # 💡 [핵심 데이터 클리닝] 보류 및 불량 로트 완벽 제거
+        # ==========================================
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
-        df_merged = df_merged[(df_merged['로트번호'] != '') & (df_merged['로트번호'].str.lower() != 'nan')]
-        df_merged = df_merged[~df_merged['로트번호'].str.contains('폐기', na=False)]
         
+        # 1. 로트번호가 아예 없는 유령 재고 삭제
+        df_merged = df_merged[(df_merged['로트번호'] != '') & (df_merged['로트번호'].str.lower() != 'nan')]
+        
+        # 2. 가용 불가능한 상태의 로트들 모두 삭제 (대소문자 무시)
+        exclude_lots = '임시적치|불량|ZPK|약국반품|폐기'
+        df_merged = df_merged[~df_merged['로트번호'].str.contains(exclude_lots, case=False, na=False)]
+        
+        # ==========================================
+
         df_merged['납품처'] = df_merged['납품처'].fillna('미지정').astype(str).str.strip()
-        df_merged = df_merged[df_merged['납품처'] != '-'] # '-' 데이터 제거
         
         df_merged['영업팀'] = df_merged['영업팀'].fillna('미분류').astype(str).str.strip()
         df_merged['특이사항'] = df_merged['특이사항'].fillna('').astype(str).str.strip()
@@ -164,7 +171,6 @@ if not latest_file:
     st.error("폴더 내에 Sales_Stock_*.xlsx 파일이 존재하지 않습니다.")
     st.stop()
 
-# 💡 매핑용.xlsx 파일의 최근 수정 시간을 체크하여 캐시 시스템에 전달합니다.
 mapping_mtime = os.path.getmtime("매핑용.xlsx") if os.path.exists("매핑용.xlsx") else 0
 
 df_raw = load_and_process_data(latest_file, mapping_mtime)

@@ -4,11 +4,11 @@ from io import BytesIO
 import glob
 import os
 
-# 💡 테마 감지 라이브러리 추가
+# 💡 테마 감지 라이브러리 추가 (requirements.txt에 st-theme 필수!)
 from streamlit_theme import st_theme 
 
 # ==========================================
-# 1. 페이지 테마 및 스타일 설정 (Streamlit 느낌 제거)
+# 1. 페이지 테마 및 스타일 설정
 # ==========================================
 st.set_page_config(
     page_title="Rohto Mentholatum Inventory System",
@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 커스텀 CSS: 배경색 강제 지정 제거 (다크/라이트 모드 자동 호환)
+# 커스텀 CSS: 다크/라이트 모드 자동 호환 (배경/글자색 강제 지정 제거)
 st.markdown("""
     <style>
     /* 폰트 설정 */
@@ -33,7 +33,7 @@ st.markdown("""
         border-right: 1px solid #e0e0e0;
     }
     
-    /* 버튼 스타일링 (배경을 투명하게 두어 테마에 적응, 멘소래담 초록 포인트) */
+    /* 버튼 스타일링 (배경 투명, 멘소래담 초록 포인트) */
     .stButton > button {
         width: 100%;
         background-color: transparent; 
@@ -48,49 +48,11 @@ st.markdown("""
         color: #ffffff !important;
     }
 
-    /* 텍스트 스타일 (색상 고정 제거, 굵기만 유지) */
+    /* 텍스트 스타일 (굵기만 유지) */
     h1 { font-weight: 800; letter-spacing: -1px; }
     h3 { color: #006838; font-weight: 700; }
     
-    /* 데이터프레임 깔끔하게 */
-    [data-testid="stDataFrame"] {
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    /* 헤더/푸터 숨기기 */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-
-    /* 사이드바 스타일링 */
-    [data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #e0e0e0;
-    }
-    
-    /* 버튼 스타일링 (멘소래담 브랜드 컬러 느낌) */
-    .stButton > button {
-        width: 100%;
-        background-color: #ffffff;
-        color: #006838;
-        border: 1px solid #006838;
-        border-radius: 4px;
-        font-weight: 600;
-        transition: 0.3s;
-    }
-    .stButton > button:hover {
-        background-color: #006838;
-        color: #ffffff;
-    }
-
-    /* 텍스트 스타일 */
-    h1 { color: #1a1a1a; font-weight: 800; letter-spacing: -1px; }
-    h3 { color: #006838; font-weight: 700; }
-    
-    /* 데이터프레임 깔끔하게 */
+    /* 데이터프레임 테두리 */
     [data-testid="stDataFrame"] {
         border: 1px solid #e0e0e0;
         border-radius: 8px;
@@ -105,7 +67,7 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='Inventory_Report')
     return output.getvalue()
 
-# --- 🎯 최신 파일 자동 탐색 함수 (GitHub용) ---
+# --- 최신 파일 자동 탐색 함수 ---
 def get_latest_stock_file():
     stock_files = glob.glob("Sales_Stock_*.xlsx")
     if not stock_files:
@@ -113,19 +75,15 @@ def get_latest_stock_file():
     latest_file = sorted(stock_files, reverse=True)[0]
     return latest_file
 
-# --- 🚨 상세 팝업창 (동일 로트 합산 & 큰 글씨 & 넓은 화면) ---
+# --- 상세 팝업창 (동일 로트 합산) ---
 @st.dialog("📋 로트별 상세 재고 명세", width="large")
 def show_lot_details(df_detail, product_name):
     st.markdown(f"<h3 style='font-size: 24px; color: #006838; margin-bottom: 20px;'>📦 {product_name}</h3>", unsafe_allow_html=True)
     
-    # 동일한 로트/유효일/잔여일 데이터 합산
     merged_detail = df_detail.groupby(['로트번호', '유효일자', '잔여일수'], dropna=False, as_index=False)['수량'].sum()
-    
-    # 선입선출 정렬
     merged_detail = merged_detail.sort_values(by='잔여일수').reset_index(drop=True)
     merged_detail.rename(columns={'수량': '합산 수량'}, inplace=True)
 
-    # 표 내부 글자 크기 확대 스타일 적용
     styled_df = merged_detail.style.set_properties(**{
         'font-size': '16px',
         'font-weight': '500'
@@ -150,11 +108,9 @@ def show_lot_details(df_detail, product_name):
 def load_and_process_data(stock_file, mapping_mtime):
     mapping_file = "매핑용.xlsx"
     try:
-        # 재고 데이터 로드
         df_stock = pd.read_excel(stock_file, sheet_name="재고현황", header=1)
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
-        # 매핑 데이터 로드
         df_channel = pd.read_excel(mapping_file, sheet_name="Sheet2")
         df_channel.columns = df_channel.columns.astype(str).str.strip()
         
@@ -168,19 +124,14 @@ def load_and_process_data(stock_file, mapping_mtime):
         mapping_sub = df_channel[['Customer', '제품코드_key', 'Remarks', 'Sales Team', 'Channel']].dropna(subset=['제품코드_key']).drop_duplicates('제품코드_key')
         df_merged = pd.merge(df_stock, mapping_sub, left_on="상품코드_key", right_on="제품코드_key", how="left")
         
-        # '합계수량' 대신 정상재고인 '환산' 컬럼을 수량으로 매핑
         df_merged.rename(columns={
             'Customer': '납품처', '상품코드': '제품코드', '화주LOT': '로트번호',
             '환산': '수량', 'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
         }, inplace=True)
 
-        # [데이터 클리닝] 보류, 불량, 회송예정 등 완벽 제거
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
-        
-        # 1. 로트번호가 아예 없는 유령 재고 삭제
         df_merged = df_merged[(df_merged['로트번호'] != '') & (df_merged['로트번호'].str.lower() != 'nan')]
         
-        # 2. 가용 불가능한 상태의 로트들 모두 삭제
         exclude_lots = '임시적치|불량|ZPK|약국반품|폐기|회송예정'
         df_merged = df_merged[~df_merged['로트번호'].str.contains(exclude_lots, case=False, na=False)]
 
@@ -214,40 +165,33 @@ if df_raw is None: st.stop()
 # 3. 사이드바 UI (테마 감지 로고 적용)
 # ==========================================
 with st.sidebar:
-    # 💡 사용자의 현재 테마(다크/라이트) 감지
+    # 사용자 테마 감지
     theme = st_theme()
     
-    # 1. 최상단 로고 (테마에 따라 분기)
+    # 테마에 따른 로고 분기
     if os.path.exists("logo.png") and os.path.exists("logo2.png"):
-        # 다크 모드일 경우 logo2.png 렌더링
         if theme and theme.get("base") == "dark":
             st.image("logo2.png", width=200)
-        # 라이트 모드이거나 테마 정보를 아직 못 불러온 경우 기본 logo.png 렌더링
         else:
             st.image("logo.png", width=200)
-            
     elif os.path.exists("logo.png"):
         st.image("logo.png", width=200)
-        
     else:
         st.subheader("Mentholatum")
         
     st.markdown("---")
     
-    # 2. 필터 옵션 영역
     st.subheader("Filter Option")
     
     is_exclusive = st.toggle("🌟 전용 납품 품목만 보기")
     st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 12px 0;'></div>", unsafe_allow_html=True)
     
-    # 납품처 리스트 정제
     customer_set = set(part.strip() for c in df_raw['납품처'].dropna() for part in str(c).split(',') if part.strip())
     all_customers = sorted(list(customer_set))
     selected_customer = st.selectbox("🏢 납품처", ["전체"] + all_customers)
     
     st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 12px 0;'></div>", unsafe_allow_html=True)
     
-    # 영업팀 리스트 정제
     team_set = set(part.strip() for t in df_raw['영업팀'].dropna() for part in str(t).split(',') if part.strip())
     all_teams = sorted(list(team_set))
     selected_team = st.selectbox("👥 영업팀", ["전체"] + all_teams)
@@ -257,15 +201,12 @@ with st.sidebar:
     search_q = st.text_input("🔍 Search", placeholder="제품명 또는 코드")
     
     st.markdown("---")
-    
-    # 3. 관리 정보 영역
     st.subheader("Admin Console")
     st.info(f"📅 **Latest Sync**\n{latest_file}")
-    
     st.caption("© 2026 Rohto Mentholatum Korea")
 
 # ==========================================
-# 필터링 로직 (Exact Match 적용)
+# 필터링 로직
 # ==========================================
 df_filtered = df_raw.copy()
 
@@ -300,7 +241,6 @@ if not df_filtered.empty:
     
     df_main.rename(columns={'수량': '총 재고'}, inplace=True)
     
-    # 지표 카드
     m1, m2, m3 = st.columns(3)
     m1.metric("총 취급 품목수", f"{len(df_main)} SKUs")
     m2.metric("총 가용 수량", f"{df_main['총 재고'].sum():,} EA")
@@ -310,7 +250,6 @@ if not df_filtered.empty:
 
     st.markdown("---")
     
-    # 테이블 레이아웃
     grid_ratio = [1.5, 1.2, 1.5, 3.5, 1.2, 2.0, 1.0]
     cols = st.columns(grid_ratio)
     fields = ['납품처', '영업팀', '제품코드', '상품명', '현재고', '특이사항', 'Action']

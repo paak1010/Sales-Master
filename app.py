@@ -3,6 +3,7 @@ import pandas as pd
 from io import BytesIO
 import glob
 import os
+from PIL import Image, ImageOps # 💡 이미지 크기 통일을 위한 라이브러리 추가
 
 # ==========================================
 # 1. 페이지 테마 및 스타일 설정
@@ -41,7 +42,26 @@ def get_latest_stock_file():
     if not stock_files: return None
     return sorted(stock_files, reverse=True)[0]
 
-# --- 🚨 상세 팝업창 (images, images2 폴더 모두 탐색) ---
+# --- 🎯 삐뚤빼뚤한 사진 크기를 정사각형으로 통일해주는 함수 ---
+def process_uniform_image(img_path, size=(500, 500)):
+    try:
+        img = Image.open(img_path)
+        # 배경이 투명한 PNG 파일 등을 흰색 배경으로 처리
+        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+            img = img.convert('RGBA')
+            bg = Image.new('RGB', img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        else:
+            img = img.convert('RGB')
+        
+        # 원본 비율을 유지하면서 부족한 부분은 흰색(255,255,255) 여백으로 채워서 완벽한 정사각형으로 만듭니다.
+        img = ImageOps.pad(img, size, color=(255, 255, 255))
+        return img
+    except Exception:
+        return None
+
+# --- 🚨 상세 팝업창 ---
 @st.dialog("📋 제품 상세 및 로트 명세", width="large")
 def show_lot_details(df_detail, product_name, capacity, product_code):
     st.markdown(f"<h3 style='font-size: 24px; color: #006838; margin-bottom: 20px;'>📦 {product_name}</h3>", unsafe_allow_html=True)
@@ -49,12 +69,11 @@ def show_lot_details(df_detail, product_name, capacity, product_code):
     c1, c2 = st.columns([1, 2.5])
     
     with c1:
-        # 1. 💡 제품코드(파일명)로 이미지 자동 탐색
+        # 1. 💡 제품코드(파일명)로 이미지 자동 탐색 및 규격 통일 렌더링
         image_displayed = False
-        valid_exts = ['.jpg', '.jpeg', '.png', '.JPG', '.PNG']
+        valid_exts = ['.jpg', '.jpeg', '.png', '.JPG', '.PNG', '.webp']
         
         for ext in valid_exts:
-            # 💡 탐색 경로에 images 폴더와 images2 폴더를 모두 추가했습니다!
             paths_to_check = [
                 f"{product_code}{ext}", 
                 f"images/{product_code}{ext}", 
@@ -63,24 +82,24 @@ def show_lot_details(df_detail, product_name, capacity, product_code):
             
             for path in paths_to_check:
                 if os.path.exists(path):
-                    try:
-                        st.image(path, use_container_width=True)
+                    # 경로가 존재하면 크기를 딱 맞춰서 메모리로 불러옵니다.
+                    uniform_img = process_uniform_image(path)
+                    if uniform_img:
+                        st.image(uniform_img, use_container_width=True)
                         image_displayed = True
                         break
-                    except Exception:
-                        pass
             if image_displayed: break
                 
-        # 파일명과 일치하는 사진이 아예 없으면 기본 멘소래담 로고 띄우기
+        # 사진이 없을 경우 멘소래담 로고 띄우기
         if not image_displayed:
             st.image("https://www.rohto.co.kr/common/images/logo.png", use_container_width=True)
             
-        # 2. 💡 용량(L) 렌더링
-        display_cap = capacity if str(capacity) not in ['0', '0.0', 'nan', ''] else "-"
+        # 2. 💡 용량 렌더링 ('L' 제거, 엑셀 텍스트 그대로 표시)
+        display_cap = str(capacity).strip() if str(capacity) not in ['0', '0.0', 'nan', '', '-'] else "정보 없음"
         st.markdown(f"""
             <div style='text-align: center; padding: 10px; background-color: #f1f8f5; border-radius: 8px; margin-top: 10px;'>
                 <span style='font-size: 14px; color: #555;'>규격/용량</span><br>
-                <strong style='font-size: 18px; color: #006838;'>{display_cap} L</strong>
+                <strong style='font-size: 18px; color: #006838;'>{display_cap}</strong>
             </div>
         """, unsafe_allow_html=True)
 
@@ -123,7 +142,12 @@ def load_and_process_data(stock_file, mapping_mtime):
         df_stock['상품코드_key'] = df_stock['상품코드'].astype(str).str.strip().str.upper()
         df_channel['제품코드_key'] = df_channel['제품코드'].astype(str).str.strip().str.upper()
 
-        mapping_sub = df_channel[['Customer', '제품코드_key', 'Remarks', 'Sales Team', 'Channel']].dropna(subset=['제품코드_key']).drop_duplicates('제품코드_key')
+        # 💡 매핑 엑셀(Sheet2)에 '용량' 컬럼이 있으면 그걸 최우선으로 가져옵니다!
+        cols_to_bring = ['Customer', '제품코드_key', 'Remarks', 'Sales Team', 'Channel']
+        if '용량' in df_channel.columns:
+            cols_to_bring.append('용량')
+            
+        mapping_sub = df_channel[cols_to_bring].dropna(subset=['제품코드_key']).drop_duplicates('제품코드_key')
         df_merged = pd.merge(df_stock, mapping_sub, left_on="상품코드_key", right_on="제품코드_key", how="left")
         
         df_merged.rename(columns={
@@ -131,10 +155,14 @@ def load_and_process_data(stock_file, mapping_mtime):
             '환산': '수량', 'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
         }, inplace=True)
 
-        if '용량(L)' in df_merged.columns:
-            df_merged['용량'] = df_merged['용량(L)'].fillna('0').astype(str).str.strip()
-        else:
-            df_merged['용량'] = '0'
+        # 💡 매핑 파일에 용량이 안 적혀 있다면, 기존 재고파일의 '용량(L)' 데이터를 가져오는 2중 방어벽
+        if '용량' not in df_merged.columns:
+            if '용량(L)' in df_merged.columns:
+                df_merged['용량'] = df_merged['용량(L)']
+            else:
+                df_merged['용량'] = '-'
+        
+        df_merged['용량'] = df_merged['용량'].fillna('-').astype(str).str.strip()
 
         df_merged['로트번호'] = df_merged['로트번호'].fillna('').astype(str).str.strip()
         df_merged = df_merged[(df_merged['로트번호'] != '') & (df_merged['로트번호'].str.lower() != 'nan')]

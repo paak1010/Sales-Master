@@ -251,7 +251,7 @@ if not df_filtered.empty:
     
     grid_ratio = [1.5, 1.2, 1.5, 3.5, 1.2, 2.0, 1.0]
     cols = st.columns(grid_ratio)
-    fields = ['납품처', '영업팀', '제품코드', '상품명', '현재고', '특이사항', 'Action']
+    fields = ['납품처', '영업팀', '제품코드', '상품명', '현재 재고', '특이사항', 'Action']
     for col, field in zip(cols, fields): col.markdown(f"**{field}**")
     st.markdown("<div style='border-bottom: 2px solid #006838; margin-bottom: 10px;'></div>", unsafe_allow_html=True)
 

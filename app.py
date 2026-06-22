@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
+from io import BytesIO
 import os
 from PIL import Image, ImageOps
 
@@ -109,12 +110,12 @@ def load_data_from_gsheets():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         
-        # 1️⃣ 원본 재고 시트 (꼬리표 완벽 제거 버전)
+        # 1️⃣ 원본 재고 시트 (🚨 404 방지: worksheet 파라미터 삭제 -> 무조건 첫 번째 시트 로드)
         stock_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA"
-        df_stock = conn.read(spreadsheet=stock_url, worksheet="Stock")
+        df_stock = conn.read(spreadsheet=stock_url)
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
-        # 2️⃣ 매핑용 시트 (꼬리표 완벽 제거 버전)
+        # 2️⃣ 매핑용 시트 (기존처럼 유지하되, 혹시 여기서도 에러가 난다면 worksheet 파라미터를 지워보세요)
         mapping_url = "https://docs.google.com/spreadsheets/d/1mQbJ_H1KOGPD1wNQdIN1cpmLSn_iBbb0iLFLctMMtJc"
         df_channel = conn.read(spreadsheet=mapping_url, worksheet="Sheet2")
         df_channel.columns = df_channel.columns.astype(str).str.strip()
@@ -157,7 +158,6 @@ def load_data_from_gsheets():
         return df_merged
     except Exception as e:
         st.error(f"데이터 연동 중 오류가 발생했습니다: {e}")
-        st.info("💡 해결 방법: 원본 재고 구글 시트의 맨 아래 탭 이름이 'Stock'으로 정확히 되어 있는지 다시 한번 확인해주세요!")
         return None
 
 # ==========================================

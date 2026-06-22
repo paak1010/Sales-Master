@@ -1,42 +1,126 @@
 import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
+from io import BytesIO
 import os
+from PIL import Image, ImageOps
 
 # ==========================================
 # 1. 페이지 테마 및 스타일 설정
 # ==========================================
-st.set_page_config(page_title="Rohto Mentholatum Inventory System", layout="wide")
+st.set_page_config(
+    page_title="Rohto Mentholatum Inventory System",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.markdown("""
     <style>
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
     * { font-family: 'Pretendard', sans-serif; }
     .stApp { background-color: #f8f9fa; }
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
     [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid #e0e0e0; }
+    .stButton > button { width: 100%; background-color: #ffffff; color: #006838; border: 1px solid #006838; border-radius: 4px; font-weight: 600; transition: 0.3s; }
+    .stButton > button:hover { background-color: #006838; color: #ffffff; }
+    h1 { color: #1a1a1a; font-weight: 800; letter-spacing: -1px; }
+    h3 { color: #006838; font-weight: 700; }
+    [data-testid="stDataFrame"] { border: 1px solid #e0e0e0; border-radius: 8px; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 구글 시트 2개(재고, 매핑) 동시 로드
+# 2. 이미지 처리 및 상세 팝업창 함수
 # ==========================================
-@st.cache_data(ttl=600) # 10분마다 자동으로 구글 시트 최신화
+def process_uniform_image(img_path, size=(500, 500)):
+    try:
+        img = Image.open(img_path)
+        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+            img = img.convert('RGBA')
+            bg = Image.new('RGB', img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        else:
+            img = img.convert('RGB')
+        img = ImageOps.pad(img, size, color=(255, 255, 255))
+        return img
+    except Exception:
+        return None
+
+@st.dialog("📋 제품 상세 및 로트 명세", width="large")
+def show_lot_details(df_detail, product_name, capacity, product_code):
+    st.markdown(f"<h3 style='font-size: 24px; color: #006838; margin-bottom: 20px;'>📦 {product_name}</h3>", unsafe_allow_html=True)
+    c1, c2 = st.columns([1, 2.5])
+    
+    with c1:
+        image_displayed = False
+        valid_exts = ['.jpg', '.jpeg', '.png', '.JPG', '.PNG', '.webp']
+        
+        for ext in valid_exts:
+            paths_to_check = [
+                f"{product_code}{ext}", 
+                f"images/{product_code}{ext}", 
+                f"images2/{product_code}{ext}"
+            ]
+            for path in paths_to_check:
+                if os.path.exists(path):
+                    uniform_img = process_uniform_image(path)
+                    if uniform_img:
+                        st.image(uniform_img, use_container_width=True)
+                        image_displayed = True
+                        break
+            if image_displayed: break
+                
+        if not image_displayed:
+            st.image("https://www.rohto.co.kr/common/images/logo.png", use_container_width=True)
+            
+        display_cap = str(capacity).strip() if str(capacity) not in ['0', '0.0', 'nan', '', '-'] else "정보 없음"
+        st.markdown(f"""
+            <div style='text-align: center; padding: 10px; background-color: #f1f8f5; border-radius: 8px; margin-top: 10px;'>
+                <span style='font-size: 14px; color: #555;'>규격/용량</span><br>
+                <strong style='font-size: 18px; color: #006838;'>{display_cap}</strong>
+            </div>
+        """, unsafe_allow_html=True)
+
+    with c2:
+        merged_detail = df_detail.groupby(['로트번호', '유효일자', '잔여일수'], dropna=False, as_index=False)['수량'].sum()
+        merged_detail = merged_detail.sort_values(by='잔여일수').reset_index(drop=True)
+        merged_detail.rename(columns={'수량': '합산 수량'}, inplace=True)
+        styled_df = merged_detail.style.set_properties(**{'font-size': '16px', 'font-weight': '500'})
+
+        st.dataframe(
+            styled_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "잔여일수": st.column_config.ProgressColumn("유통기한 잔여", format="%d일", min_value=0, max_value=1095),
+                "합산 수량": st.column_config.NumberColumn("가용 재고", format="%d EA"),
+                "유효일자": st.column_config.DateColumn("유효일자")
+            }
+        )
+        st.markdown("<p style='font-size: 14px; color: gray;'>※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.</p>", unsafe_allow_html=True)
+
+# ==========================================
+# 3. 구글 시트 데이터 로드 및 전처리
+# ==========================================
+@st.cache_data(ttl=600)
 def load_data_from_gsheets():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         
-        # 1️⃣ 매일 갱신되는 원본 '재고' 구글 시트 불러오기 (첫 번째 링크)
-        # (주의: 만약 두 링크의 역할이 반대라면 URL 위치만 서로 바꿔주세요)
+        # 1️⃣ 원본 재고 구글 시트 로드 (✅ 탭 이름을 "Stock"으로 반드시 변경해주세요!)
         stock_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA/edit?gid=2041758552#gid=2041758552"
-       df_stock = conn.read(spreadsheet=stock_url, worksheet="Stock")
+        df_stock = conn.read(spreadsheet=stock_url, worksheet="Stock")
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
-        # 2️⃣ 팀원들이 관리하는 '매핑용' 구글 시트 불러오기 (두 번째 링크)
+        # 2️⃣ 매핑용 구글 시트 로드 (탭 이름: "Sheet2")
         mapping_url = "https://docs.google.com/spreadsheets/d/1mQbJ_H1KOGPD1wNQdIN1cpmLSn_iBbb0iLFLctMMtJc/edit?gid=230529674#gid=230529674"
-        df_channel = conn.read(spreadsheet=mapping_url, worksheet="Sheet2") # 엑셀 하단 탭 이름
+        df_channel = conn.read(spreadsheet=mapping_url, worksheet="Sheet2")
         df_channel.columns = df_channel.columns.astype(str).str.strip()
         
-        # --- (이하 기존 병합 및 전처리 로직 100% 동일) ---
+        # --- 전처리 로직 ---
         df_stock['상품코드_key'] = df_stock['상품코드'].astype(str).str.strip().str.upper()
         df_channel['제품코드_key'] = df_channel['제품코드'].astype(str).str.strip().str.upper()
 
@@ -73,12 +157,12 @@ def load_data_from_gsheets():
             
         return df_merged
     except Exception as e:
-        st.error(f"구글 시트 연동 중 에러가 발생했습니다: {e}")
-        st.info("💡 힌트: 구글 시트의 링크가 정확한지, 그리고 각 파일의 하단 시트 탭 이름('재고현황', 'Sheet2')이 일치하는지 확인해주세요.")
+        st.error(f"데이터 연동 중 오류가 발생했습니다: {e}")
+        st.info("💡 해결 방법: 원본 재고 구글 시트의 맨 아래 탭 이름이 'Stock'으로 되어 있는지 꼭 확인해주세요!")
         return None
 
 # ==========================================
-# 3. 사이드바 UI (수동 업로드 완전 제거)
+# 4. 사이드바 UI & 필터링
 # ==========================================
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", width=200)
@@ -86,15 +170,13 @@ with st.sidebar:
     st.markdown("---")
     
     st.subheader("🔄 Data Sync")
-    # 파일 업로드 대신 '새로고침' 버튼으로 대체
     if st.button("클라우드 최신 재고 동기화", type="primary", use_container_width=True):
-        st.cache_data.clear() # 캐시 삭제 후 새로 읽기
+        st.cache_data.clear()
         st.success("데이터가 최신화되었습니다!")
         
     st.markdown("<div style='border-bottom: 1px solid #eaeaea; margin: 12px 0;'></div>", unsafe_allow_html=True)
     st.subheader("Filter Option")
     
-    # (앱 실행 및 필터링 로직)
     df_raw = load_data_from_gsheets()
     if df_raw is None or df_raw.empty:
         st.stop()
@@ -109,7 +191,6 @@ with st.sidebar:
     
     search_q = st.text_input("🔍 Search", placeholder="제품명 또는 코드")
 
-# 필터 적용
 df_filtered = df_raw.copy()
 if is_exclusive: df_filtered = df_filtered[~df_filtered['납품처'].astype(str).str.contains(',', na=False)]
 if selected_customer != "전체": df_filtered = df_filtered[df_filtered['납품처'].apply(lambda x: selected_customer in [c.strip() for c in str(x).split(',')])]
@@ -117,7 +198,7 @@ if selected_team != "전체": df_filtered = df_filtered[df_filtered['영업팀']
 if search_q: df_filtered = df_filtered[df_filtered['상품명'].str.contains(search_q, case=False, na=False) | df_filtered['제품코드'].str.contains(search_q, case=False, na=False)]
 
 # ==========================================
-# 4. 메인 대시보드 화면
+# 5. 메인 대시보드 출력
 # ==========================================
 st.title("Inventory Mastering Dashboard")
 
@@ -134,6 +215,28 @@ if not df_filtered.empty:
     m2.metric("총 가용 수량", f"{df_main['총 재고'].sum():,} EA")
     
     st.markdown("---")
-    st.dataframe(df_main, use_container_width=True, hide_index=True)
+    
+    grid_ratio = [1.5, 1.2, 1.5, 3.5, 1.2, 2.0, 1.0]
+    cols = st.columns(grid_ratio)
+    fields = ['납품처', '영업팀', '제품코드', '상품명', '현재 재고', '특이사항', 'Action']
+    for col, field in zip(cols, fields): col.markdown(f"**{field}**")
+    st.markdown("<div style='border-bottom: 2px solid #006838; margin-bottom: 10px;'></div>", unsafe_allow_html=True)
+
+    for idx, row in df_main.iterrows():
+        with st.container():
+            r_cols = st.columns(grid_ratio)
+            r_cols[0].write(row['납품처'])
+            r_cols[1].write(row['영업팀'])
+            r_cols[2].write(row['제품코드'])
+            r_cols[3].write(f"**{row['상품명']}**")
+            r_cols[4].write(f"{row['총 재고']:,}")
+            r_cols[5].write(f"<small>{row['특이사항']}</small>", unsafe_allow_html=True)
+            
+            if r_cols[6].button("상세", key=f"v_{idx}"):
+                df_detail = df_filtered[
+                    (df_filtered['상품바코드'] == row['상품바코드']) & 
+                    (df_filtered['제품코드'] == row['제품코드'])
+                ][['로트번호', '유효일자', '잔여일수', '수량']]
+                show_lot_details(df_detail, row['상품명'], row['용량'], row['제품코드'])
 else:
     st.warning("조회된 재고 데이터가 없습니다.")

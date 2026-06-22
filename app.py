@@ -28,7 +28,7 @@ def load_data_from_gsheets():
         # 1️⃣ 매일 갱신되는 원본 '재고' 구글 시트 불러오기 (첫 번째 링크)
         # (주의: 만약 두 링크의 역할이 반대라면 URL 위치만 서로 바꿔주세요)
         stock_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA/edit?gid=2041758552#gid=2041758552"
-        df_stock = conn.read(spreadsheet=stock_url, worksheet="재고현황") # 엑셀 하단 탭 이름
+       df_stock = conn.read(spreadsheet=stock_url, worksheet="Stock")
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
         # 2️⃣ 팀원들이 관리하는 '매핑용' 구글 시트 불러오기 (두 번째 링크)

@@ -110,13 +110,13 @@ def load_data_from_gsheets():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         
-        # 1️⃣ 원본 재고 구글 시트 로드 (✅ 탭 이름을 "Stock"으로 반드시 변경해주세요!)
-        stock_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA/edit?gid=2041758552#gid=2041758552"
+        # 1️⃣ 꼬리표를 제거한 깔끔한 원본 재고 시트 주소
+        stock_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA"
         df_stock = conn.read(spreadsheet=stock_url, worksheet="Stock")
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
-        # 2️⃣ 매핑용 구글 시트 로드 (탭 이름: "Sheet2")
-        mapping_url = "https://docs.google.com/spreadsheets/d/1mQbJ_H1KOGPD1wNQdIN1cpmLSn_iBbb0iLFLctMMtJc/edit?gid=230529674#gid=230529674"
+        # 2️⃣ 꼬리표를 제거한 깔끔한 매핑용 시트 주소
+        mapping_url = "https://docs.google.com/spreadsheets/d/1mQbJ_H1KOGPD1wNQdIN1cpmLSn_iBbb0iLFLctMMtJc"
         df_channel = conn.read(spreadsheet=mapping_url, worksheet="Sheet2")
         df_channel.columns = df_channel.columns.astype(str).str.strip()
         
@@ -158,7 +158,7 @@ def load_data_from_gsheets():
         return df_merged
     except Exception as e:
         st.error(f"데이터 연동 중 오류가 발생했습니다: {e}")
-        st.info("💡 해결 방법: 원본 재고 구글 시트의 맨 아래 탭 이름이 'Stock'으로 되어 있는지 꼭 확인해주세요!")
+        st.info("💡 힌트: 재고 원본 구글 시트 하단의 탭 이름이 'Stock'으로 잘 바뀌어 있는지 다시 한번 확인해주세요!")
         return None
 
 # ==========================================

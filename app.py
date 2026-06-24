@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 from io import BytesIO
 import os
 from PIL import Image, ImageOps
@@ -103,21 +102,19 @@ def show_lot_details(df_detail, product_name, capacity, product_code):
         st.markdown("<p style='font-size: 14px; color: gray;'>※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.</p>", unsafe_allow_html=True)
 
 # ==========================================
-# 3. 구글 시트 데이터 로드 및 전처리
+# 3. 구글 시트 데이터 로드 및 전처리 (제공된 실주소 매핑)
 # ==========================================
 @st.cache_data(ttl=600)
 def load_data_from_gsheets():
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        
-        # 1️⃣ 원본 재고 시트 (🚨 404 방지: worksheet 파라미터 삭제 -> 무조건 첫 번째 시트 로드)
-        stock_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA"
-        df_stock = conn.read(spreadsheet=stock_url)
+        # 1️⃣ 원본 재고 시트 (제공해주신 gid=2041758552 반영)
+        stock_csv_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA/export?format=csv&gid=2041758552"
+        df_stock = pd.read_csv(stock_csv_url)
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
-        # 2️⃣ 매핑용 시트 (기존처럼 유지하되, 혹시 여기서도 에러가 난다면 worksheet 파라미터를 지워보세요)
-        mapping_url = "https://docs.google.com/spreadsheets/d/1mQbJ_H1KOGPD1wNQdIN1cpmLSn_iBbb0iLFLctMMtJc"
-        df_channel = conn.read(spreadsheet=mapping_url, worksheet="Sheet2")
+        # 2️⃣ 매핑용 시트 (제공해주신 gid=230529674 반영)
+        mapping_csv_url = "https://docs.google.com/spreadsheets/d/1mQbJ_H1KOGPD1wNQdIN1cpmLSn_iBbb0iLFLctMMtJc/export?format=csv&gid=230529674"
+        df_channel = pd.read_csv(mapping_csv_url)
         df_channel.columns = df_channel.columns.astype(str).str.strip()
         
         # --- 전처리 로직 ---

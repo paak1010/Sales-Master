@@ -108,14 +108,14 @@ def read_csv_robust(url, expected_columns):
     """위에 빈 줄이나 피벗 필터가 있어도 진짜 제목 줄을 알아서 찾아내는 마법의 로직"""
     df = pd.read_csv(url)
     
-    # 1. 이미 첫 줄이 정상적인 제목 줄인 경우
-    if any(expected in col for expected in expected_columns for col in df.columns):
+    # 1. 이미 첫 줄이 정상적인 제목 줄인 경우 (float 에러 방지를 위해 str() 강제 적용)
+    if any(expected in str(col) for expected in expected_columns for col in df.columns):
         return df
         
     # 2. 빈 줄이 있어서 밀린 경우 (위에서부터 최대 10줄까지 쫙 스캔해서 찾기)
     for i in range(min(10, len(df))):
         row_values = df.iloc[i].astype(str).tolist()
-        if any(expected in val for expected in expected_columns for val in row_values):
+        if any(expected in str(val) for expected in expected_columns for val in row_values):
             # 진짜 제목이 있는 줄을 찾으면 그 줄(i+1)을 제목으로 새로 불러오기
             return pd.read_csv(url, header=i+1)
             

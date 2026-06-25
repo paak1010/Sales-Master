@@ -102,17 +102,17 @@ def show_lot_details(df_detail, product_name, capacity, product_code):
         st.markdown("<p style='font-size: 14px; color: gray;'>※ 정보(로트/유효일/잔여일)가 완벽히 동일한 데이터는 자동으로 합산 표시됩니다.</p>", unsafe_allow_html=True)
 
 # ==========================================
-# 3. 구글 시트 데이터 로드 및 전처리 (제공된 실주소 매핑)
+# 3. 구글 시트 데이터 로드 및 전처리
 # ==========================================
 @st.cache_data(ttl=600)
 def load_data_from_gsheets():
     try:
-        # 1️⃣ 원본 재고 시트 (제공해주신 gid=2041758552 반영)
+        # 1️⃣ 원본 재고 시트 (header=2 적용: 3번째 줄부터 실제 컬럼 제목으로 인식)
         stock_csv_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA/export?format=csv&gid=2041758552"
-        df_stock = pd.read_csv(stock_csv_url)
+        df_stock = pd.read_csv(stock_csv_url, header=2)
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
-        # 2️⃣ 매핑용 시트 (제공해주신 gid=230529674 반영)
+        # 2️⃣ 매핑용 시트 (얘는 첫 줄이 제목이 맞음)
         mapping_csv_url = "https://docs.google.com/spreadsheets/d/1mQbJ_H1KOGPD1wNQdIN1cpmLSn_iBbb0iLFLctMMtJc/export?format=csv&gid=230529674"
         df_channel = pd.read_csv(mapping_csv_url)
         df_channel.columns = df_channel.columns.astype(str).str.strip()
@@ -128,10 +128,23 @@ def load_data_from_gsheets():
         mapping_sub = df_channel[cols_to_bring].dropna(subset=['제품코드_key']).drop_duplicates('제품코드_key')
         df_merged = pd.merge(df_stock, mapping_sub, left_on="상품코드_key", right_on="제품코드_key", how="left")
         
+        # 이름 변경 (엑셀 원본에 맞게 유연하게 매핑)
         df_merged.rename(columns={
             'Customer': '납품처', '상품코드': '제품코드', '화주LOT': '로트번호',
-            '환산': '수량', 'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
+            'Remarks': '특이사항', 'Sales Team': '영업팀', 'Channel': '채널'
         }, inplace=True)
+
+        # 수량 컬럼 찾기 (사진의 '합계 : 환산' 또는 기존 '환산')
+        if '합계 : 환산' in df_merged.columns:
+            df_merged.rename(columns={'합계 : 환산': '수량'}, inplace=True)
+        elif '환산' in df_merged.columns:
+            df_merged.rename(columns={'환산': '수량'}, inplace=True)
+
+        # 수량과 잔여일수 안전하게 숫자로 변환
+        if '수량' in df_merged.columns:
+            df_merged['수량'] = pd.to_numeric(df_merged['수량'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+        if '잔여일수' in df_merged.columns:
+            df_merged['잔여일수'] = pd.to_numeric(df_merged['잔여일수'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 
         if '용량' not in df_merged.columns:
             df_merged['용량'] = df_merged.get('용량(L)', '-')
@@ -208,7 +221,7 @@ if not df_filtered.empty:
     
     m1, m2, m3 = st.columns(3)
     m1.metric("총 취급 품목수", f"{len(df_main)} SKUs")
-    m2.metric("총 가용 수량", f"{df_main['총 재고'].sum():,} EA")
+    m2.metric("총 가용 수량", f"{int(df_main['총 재고'].sum()):,} EA")
     
     st.markdown("---")
     
@@ -225,7 +238,7 @@ if not df_filtered.empty:
             r_cols[1].write(row['영업팀'])
             r_cols[2].write(row['제품코드'])
             r_cols[3].write(f"**{row['상품명']}**")
-            r_cols[4].write(f"{row['총 재고']:,}")
+            r_cols[4].write(f"{int(row['총 재고']):,}")
             r_cols[5].write(f"<small>{row['특이사항']}</small>", unsafe_allow_html=True)
             
             if r_cols[6].button("상세", key=f"v_{idx}"):

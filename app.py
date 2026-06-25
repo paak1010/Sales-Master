@@ -105,21 +105,22 @@ def show_lot_details(df_detail, product_name, capacity, product_code):
 # 3. 구글 시트 데이터 로드 및 전처리
 # ==========================================
 def read_csv_robust(url, expected_columns):
-    """위에 빈 줄이나 피벗 필터가 있어도 진짜 제목 줄을 알아서 찾아내는 마법의 로직"""
+    """빈칸(NaN=float) 에러를 원천 차단하는 무적의 스캐너 로직"""
     df = pd.read_csv(url)
     
-    # 1. 이미 첫 줄이 정상적인 제목 줄인 경우 (float 에러 방지를 위해 str() 강제 적용)
-    if any(expected in str(col) for expected in expected_columns for col in df.columns):
-        return df
-        
-    # 2. 빈 줄이 있어서 밀린 경우 (위에서부터 최대 10줄까지 쫙 스캔해서 찾기)
-    for i in range(min(10, len(df))):
-        row_values = df.iloc[i].astype(str).tolist()
-        if any(expected in str(val) for expected in expected_columns for val in row_values):
-            # 진짜 제목이 있는 줄을 찾으면 그 줄(i+1)을 제목으로 새로 불러오기
-            return pd.read_csv(url, header=i+1)
+    # 1. 컬럼명을 모두 안전한 텍스트 덩어리로 변환 후 검사
+    cols_str = " ".join(df.columns.astype(str))
+    for exp in expected_columns:
+        if exp in cols_str:
+            return df
             
-    # 3. 그래도 못 찾으면 일단 원본 반환 (디버깅용)
+    # 2. 아래 행에 제목이 밀려있는 경우 텍스트 덩어리로 변환 후 검사
+    for i in range(min(15, len(df))):
+        row_str = " ".join(df.iloc[i].astype(str).values)
+        for exp in expected_columns:
+            if exp in row_str:
+                return pd.read_csv(url, header=i+1)
+                
     return df
 
 @st.cache_data(ttl=600)
@@ -152,7 +153,7 @@ def load_data_from_gsheets():
         df_channel['제품코드_key'] = df_channel['제품코드'].astype(str).str.strip().str.upper()
 
         cols_to_bring = ['Customer', '제품코드_key', 'Remarks', 'Sales Team', 'Channel']
-        if '용량' in df_channel.columns:
+        if '용량' in list(df_channel.columns):
             cols_to_bring.append('용량')
             
         mapping_sub = df_channel[cols_to_bring].dropna(subset=['제품코드_key']).drop_duplicates('제품코드_key')
@@ -165,18 +166,18 @@ def load_data_from_gsheets():
         }, inplace=True)
 
         # 수량 컬럼 찾기 (사진의 '합계 : 환산' 또는 기존 '환산')
-        if '합계 : 환산' in df_merged.columns:
+        if '합계 : 환산' in list(df_merged.columns):
             df_merged.rename(columns={'합계 : 환산': '수량'}, inplace=True)
-        elif '환산' in df_merged.columns:
+        elif '환산' in list(df_merged.columns):
             df_merged.rename(columns={'환산': '수량'}, inplace=True)
 
         # 수량과 잔여일수 안전하게 숫자로 변환
-        if '수량' in df_merged.columns:
+        if '수량' in list(df_merged.columns):
             df_merged['수량'] = pd.to_numeric(df_merged['수량'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-        if '잔여일수' in df_merged.columns:
+        if '잔여일수' in list(df_merged.columns):
             df_merged['잔여일수'] = pd.to_numeric(df_merged['잔여일수'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 
-        if '용량' not in df_merged.columns:
+        if '용량' not in list(df_merged.columns):
             df_merged['용량'] = df_merged.get('용량(L)', '-')
         
         df_merged['용량'] = df_merged['용량'].fillna('-').astype(str).str.strip()
@@ -184,15 +185,15 @@ def load_data_from_gsheets():
         df_merged = df_merged[(df_merged['로트번호'] != '') & (df_merged['로트번호'].str.lower() != 'nan')]
         
         exclude_lots = '임시적치|불량|ZPK|약국반품|폐기|회송예정'
-        df_merged = df_merged[~df_merged['로트번호'].str.contains(exclude_lots, case=False, na=False)]
+        df_merged = df_merged[~df_merged['로트번호'].astype(str).str.contains(exclude_lots, case=False, na=False)]
         
         df_merged['납품처'] = df_merged['납품처'].fillna('미지정').astype(str).str.strip()
         df_merged['영업팀'] = df_merged['영업팀'].fillna('미분류').astype(str).str.strip()
         df_merged['특이사항'] = df_merged['특이사항'].fillna('').astype(str).str.strip()
 
-        if '상품바코드' in df_merged.columns:
+        if '상품바코드' in list(df_merged.columns):
             df_merged['상품바코드'] = df_merged['상품바코드'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'[?？]', '', regex=True).str.strip()
-        if '유효일자' in df_merged.columns:
+        if '유효일자' in list(df_merged.columns):
             df_merged['유효일자'] = pd.to_datetime(df_merged['유효일자'], errors='coerce').dt.strftime('%Y-%m-%d')
             
         return df_merged
@@ -231,10 +232,17 @@ with st.sidebar:
     search_q = st.text_input("🔍 Search", placeholder="제품명 또는 코드")
 
 df_filtered = df_raw.copy()
-if is_exclusive: df_filtered = df_filtered[~df_filtered['납품처'].astype(str).str.contains(',', na=False)]
-if selected_customer != "전체": df_filtered = df_filtered[df_filtered['납품처'].apply(lambda x: selected_customer in [c.strip() for c in str(x).split(',')])]
-if selected_team != "전체": df_filtered = df_filtered[df_filtered['영업팀'].apply(lambda x: selected_team in [t.strip() for t in str(x).split(',')])]
-if search_q: df_filtered = df_filtered[df_filtered['상품명'].str.contains(search_q, case=False, na=False) | df_filtered['제품코드'].str.contains(search_q, case=False, na=False)]
+if is_exclusive: 
+    df_filtered = df_filtered[~df_filtered['납품처'].astype(str).str.contains(',', na=False)]
+if selected_customer != "전체": 
+    df_filtered = df_filtered[df_filtered['납품처'].apply(lambda x: selected_customer in [c.strip() for c in str(x).split(',')])]
+if selected_team != "전체": 
+    df_filtered = df_filtered[df_filtered['영업팀'].apply(lambda x: selected_team in [t.strip() for t in str(x).split(',')])]
+if search_q: 
+    df_filtered = df_filtered[
+        df_filtered['상품명'].astype(str).str.contains(search_q, case=False, na=False) | 
+        df_filtered['제품코드'].astype(str).str.contains(search_q, case=False, na=False)
+    ]
 
 # ==========================================
 # 5. 메인 대시보드 출력

@@ -104,20 +104,38 @@ def show_lot_details(df_detail, product_name, capacity, product_code):
 # ==========================================
 # 3. 구글 시트 데이터 로드 및 전처리
 # ==========================================
+def read_csv_robust(url, expected_columns):
+    """위에 빈 줄이나 피벗 필터가 있어도 진짜 제목 줄을 알아서 찾아내는 마법의 로직"""
+    df = pd.read_csv(url)
+    
+    # 1. 이미 첫 줄이 정상적인 제목 줄인 경우
+    if any(expected in col for expected in expected_columns for col in df.columns):
+        return df
+        
+    # 2. 빈 줄이 있어서 밀린 경우 (위에서부터 최대 10줄까지 쫙 스캔해서 찾기)
+    for i in range(min(10, len(df))):
+        row_values = df.iloc[i].astype(str).tolist()
+        if any(expected in val for expected in expected_columns for val in row_values):
+            # 진짜 제목이 있는 줄을 찾으면 그 줄(i+1)을 제목으로 새로 불러오기
+            return pd.read_csv(url, header=i+1)
+            
+    # 3. 그래도 못 찾으면 일단 원본 반환 (디버깅용)
+    return df
+
 @st.cache_data(ttl=600)
 def load_data_from_gsheets():
     try:
-        # 1️⃣ 원본 재고 시트 (header=2 적용: 3번째 줄부터 실제 컬럼 제목으로 인식)
+        # 1️⃣ 원본 재고 시트 (자동 스캔 적용)
         stock_csv_url = "https://docs.google.com/spreadsheets/d/1wuS9xiYqtepX8k13IQeEREwyowh9Jsh_gAt_MFdTjKA/export?format=csv&gid=2041758552"
-        df_stock = pd.read_csv(stock_csv_url, header=2)
+        df_stock = read_csv_robust(stock_csv_url, ['상품코드', '제품코드', '상품명', '로트번호'])
         df_stock.columns = df_stock.columns.astype(str).str.strip()
         
-        # 2️⃣ 매핑용 시트 (얘는 첫 줄이 제목이 맞음)
+        # 2️⃣ 매핑용 시트 (자동 스캔 적용)
         mapping_csv_url = "https://docs.google.com/spreadsheets/d/1mQbJ_H1KOGPD1wNQdIN1cpmLSn_iBbb0iLFLctMMtJc/export?format=csv&gid=230529674"
-        df_channel = pd.read_csv(mapping_csv_url)
+        df_channel = read_csv_robust(mapping_csv_url, ['제품코드', '상품코드', 'Customer', '납품처'])
         df_channel.columns = df_channel.columns.astype(str).str.strip()
         
-        # [스마트 디버깅 & 안전장치] 컬럼 이름이 다른 경우 유연하게 맞춰주기
+        # [스마트 디버깅 & 안전장치]
         if '상품코드' not in df_stock.columns:
             st.error(f"🚨 재고 시트에서 '상품코드'를 찾을 수 없습니다! 현재 읽힌 제목들: {', '.join(df_stock.columns)}")
             return None

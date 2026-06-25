@@ -117,6 +117,18 @@ def load_data_from_gsheets():
         df_channel = pd.read_csv(mapping_csv_url)
         df_channel.columns = df_channel.columns.astype(str).str.strip()
         
+        # [스마트 디버깅 & 안전장치] 컬럼 이름이 다른 경우 유연하게 맞춰주기
+        if '상품코드' not in df_stock.columns:
+            st.error(f"🚨 재고 시트에서 '상품코드'를 찾을 수 없습니다! 현재 읽힌 제목들: {', '.join(df_stock.columns)}")
+            return None
+            
+        if '제품코드' not in df_channel.columns:
+            if '상품코드' in df_channel.columns:
+                df_channel.rename(columns={'상품코드': '제품코드'}, inplace=True)
+            else:
+                st.error(f"🚨 매핑 시트에서 '제품코드'를 찾을 수 없습니다! 현재 파이썬이 읽어낸 제목들: {', '.join(df_channel.columns)}")
+                return None
+
         # --- 전처리 로직 ---
         df_stock['상품코드_key'] = df_stock['상품코드'].astype(str).str.strip().str.upper()
         df_channel['제품코드_key'] = df_channel['제품코드'].astype(str).str.strip().str.upper()
